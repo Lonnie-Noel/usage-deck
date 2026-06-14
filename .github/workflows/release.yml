@@ -1,0 +1,110 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x64
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            bundles: deb,appimage
+            artifact_path: |
+              src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb
+              src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage
+          - platform: macos-x64
+            os: macos-13
+            target: x86_64-apple-darwin
+            bundles: app
+            artifact_path: |
+              src-tauri/target/x86_64-apple-darwin/release/bundle/macos/*.zip
+          - platform: windows-x64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bundles: nsis
+            artifact_path: |
+              src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Prepare ccusage sidecar
+        run: npm run prepare:sidecar -- --target ${{ matrix.target }}
+
+      - name: Build Tauri bundle
+        run: npm run tauri -- build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+
+      - name: Zip macOS app
+        if: runner.os == 'macOS'
+        run: |
+          ditto -c -k --keepParent \
+            "src-tauri/target/${{ matrix.target }}/release/bundle/macos/Usage Deck.app" \
+            "src-tauri/target/${{ matrix.target }}/release/bundle/macos/Usage Deck_${{ github.ref_name }}_${{ matrix.platform }}.app.zip"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: usage-deck-${{ matrix.platform }}
+          path: ${{ matrix.artifact_path }}
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub release
+    needs: build
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: List release assets
+        run: find release-assets -maxdepth 2 -type f -print
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Usage Deck ${{ github.ref_name }}
+          body: |
+            Usage Deck ${{ github.ref_name }}
+
+            Initial desktop release with Linux, macOS, and Windows bundles.
+          files: release-assets/*
