@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="520" viewBox="0 0 900 520" role="img" aria-labelledby="title desc">
+  <title id="title">Usage Deck tray icon samples</title>
+  <desc id="desc">One-bar and two-bar horizontal gauge tray icon examples for Usage Deck.</desc>
+  <defs>
+    <style>
+      .bg { fill: #111418; }
+      .panel { fill: #191d22; stroke: #343c45; stroke-width: 1; }
+      .icon-bg { fill: #0d1115; stroke: #343c45; stroke-width: 2; }
+      .icon-inner { fill: none; stroke: #14191f; stroke-width: 4; }
+      .tray { fill: #0b0e12; stroke: #252c33; stroke-width: 1; }
+      .track { fill: #2a3139; }
+      .gpt { fill: #6fb7a8; }
+      .claude { fill: #d98b4e; }
+      .ink { fill: #e9edf0; font: 700 24px Inter, Segoe UI, sans-serif; }
+      .h2 { fill: #e9edf0; font: 700 17px Inter, Segoe UI, sans-serif; }
+      .strong { fill: #e9edf0; font: 700 15px Inter, Segoe UI, sans-serif; }
+      .muted { fill: #8e9aa6; font: 13px Inter, Segoe UI, sans-serif; }
+      .tiny { fill: #8e9aa6; font: 12px Inter, Segoe UI, sans-serif; }
+    </style>
+  </defs>
+
+  <rect class="bg" width="900" height="520" />
+  <text class="ink" x="28" y="44">Usage Deck tray icon samples</text>
+  <text class="muted" x="28" y="70">Horizontal usage gauges. One bar is thicker for readability; two bars are stacked.</text>
+
+  <g transform="translate(28 104)">
+    <rect class="panel" width="410" height="310" rx="8" />
+    <text class="h2" x="18" y="34">One bar selected</text>
+
+    <g transform="translate(18 60)">
+      <rect class="icon-bg" width="128" height="128" rx="18" />
+      <rect class="icon-inner" x="5" y="5" width="118" height="118" rx="14" />
+      <rect class="track" x="16" y="52" width="96" height="24" rx="12" />
+      <rect class="gpt" x="16" y="52" width="65" height="24" rx="12" />
+    </g>
+
+    <text class="strong" x="164" y="95">GPT weekly budget</text>
+    <text class="muted" x="164" y="122">68% filled</text>
+    <text class="muted" x="164" y="148">Rendered as one larger horizontal bar.</text>
+
+    <g transform="translate(18 224)">
+      <rect class="tray" width="374" height="62" rx="8" />
+      <text class="tiny" x="198" y="37">Windows tray scale</text>
+      <g transform="translate(322 15)">
+        <rect class="icon-bg" width="32" height="32" rx="5" stroke-width="1" />
+        <rect class="icon-inner" x="2" y="2" width="28" height="28" rx="4" stroke-width="1" />
+        <rect class="track" x="4" y="13" width="24" height="7" rx="3.5" />
+        <rect class="gpt" x="4" y="13" width="16" height="7" rx="3.5" />
+      </g>
+    </g>
+  </g>
+
+  <g transform="translate(462 104)">
+    <rect class="panel" width="410" height="310" rx="8" />
+    <text class="h2" x="18" y="34">Two bars selected</text>
+
+    <g transform="translate(18 60)">
+      <rect class="icon-bg" width="128" height="128" rx="18" />
+      <rect class="icon-inner" x="5" y="5" width="118" height="118" rx="14" />
+      <rect class="track" x="16" y="44" width="96" height="16" rx="8" />
+      <rect class="gpt" x="16" y="44" width="60" height="16" rx="8" />
+      <rect class="track" x="16" y="76" width="96" height="16" rx="8" />
+      <rect class="claude" x="16" y="76" width="33" height="16" rx="8" />
+    </g>
+
+    <text class="strong" x="164" y="95">GPT weekly + Claude monthly</text>
+    <text class="muted" x="164" y="122">GPT 62%, Claude 34%</text>
+    <text class="muted" x="164" y="148">Each bar keeps its model color.</text>
+
+    <g transform="translate(18 224)">
+      <rect class="tray" width="374" height="62" rx="8" />
+      <text class="tiny" x="198" y="37">Windows tray scale</text>
+      <g transform="translate(322 15)">
+        <rect class="icon-bg" width="32" height="32" rx="5" stroke-width="1" />
+        <rect class="icon-inner" x="2" y="2" width="28" height="28" rx="4" stroke-width="1" />
+        <rect class="track" x="4" y="10" width="24" height="4" rx="2" />
+        <rect class="gpt" x="4" y="10" width="15" height="4" rx="2" />
+        <rect class="track" x="4" y="19" width="24" height="4" rx="2" />
+        <rect class="claude" x="4" y="19" width="8" height="4" rx="2" />
+      </g>
+    </g>
+  </g>
+
+  <g transform="translate(28 456)">
+    <circle class="gpt" cx="5" cy="-4" r="5" />
+    <text class="tiny" x="18" y="0">GPT / OpenAI default</text>
+    <circle class="claude" cx="170" cy="-4" r="5" />
+    <text class="tiny" x="183" y="0">Claude default</text>
+  </g>
+</svg>

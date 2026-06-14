@@ -1,0 +1,19 @@
+[package]
+name = "usage-deck"
+version = "0.1.0"
+description = "Local ccusage dashboard"
+authors = ["Usage Deck"]
+edition = "2021"
+
+[lib]
+name = "usage_deck_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "=2.5.4", features = [] }
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "=2.10.0", features = ["tray-icon"] }
+tauri-plugin-shell = "=2.3.0"

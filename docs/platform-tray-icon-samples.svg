@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="420" viewBox="0 0 980 420" role="img" aria-labelledby="title desc">
+  <title id="title">Usage Deck platform tray icon samples</title>
+  <desc id="desc">Windows, macOS, and Ubuntu tray icon renderings for Usage Deck horizontal gauge icons.</desc>
+  <defs>
+    <style>
+      .bg { fill: #111418; }
+      .panel { fill: #191d22; stroke: #343c45; stroke-width: 1; }
+      .surface { fill: #0b0e12; stroke: #252c33; stroke-width: 1; }
+      .macbar { fill: #e8e9eb; }
+      .ubbar { fill: #1f2329; }
+      .win-icon { fill: #0d1115; stroke: #343c45; stroke-width: 2; }
+      .win-inner { fill: none; stroke: #14191f; stroke-width: 4; }
+      .ubuntu-icon { fill: #0d1115; stroke: #39424c; stroke-width: 2; }
+      .track { fill: #2a3139; }
+      .mac-track { fill: #8c98a6; opacity: 0.49; }
+      .gpt { fill: #6fb7a8; }
+      .claude { fill: #d98b4e; }
+      .ink { fill: #e9edf0; font: 700 24px Inter, Segoe UI, sans-serif; }
+      .h2 { fill: #e9edf0; font: 700 17px Inter, Segoe UI, sans-serif; }
+      .strong { fill: #e9edf0; font: 700 14px Inter, Segoe UI, sans-serif; }
+      .muted { fill: #8e9aa6; font: 13px Inter, Segoe UI, sans-serif; }
+      .dark-muted { fill: #4a5661; font: 13px Inter, Segoe UI, sans-serif; }
+    </style>
+  </defs>
+
+  <rect class="bg" width="980" height="420" />
+  <text class="ink" x="28" y="44">Platform tray icon samples</text>
+  <text class="muted" x="28" y="70">Same gauge logic, different shell treatment for notification areas, macOS menu bar, and Ubuntu AppIndicator.</text>
+
+  <g transform="translate(28 112)">
+    <rect class="panel" width="288" height="240" rx="8" />
+    <text class="h2" x="18" y="34">Windows</text>
+    <text class="muted" x="18" y="58">Dark rounded square for tray.</text>
+    <g transform="translate(80 82)">
+      <rect class="win-icon" width="128" height="128" rx="18" />
+      <rect class="win-inner" x="5" y="5" width="118" height="118" rx="14" />
+      <rect class="track" x="24" y="45" width="80" height="14" rx="7" />
+      <rect class="gpt" x="24" y="45" width="50" height="14" rx="7" />
+      <rect class="track" x="24" y="72" width="80" height="14" rx="7" />
+      <rect class="claude" x="24" y="72" width="28" height="14" rx="7" />
+    </g>
+  </g>
+
+  <g transform="translate(346 112)">
+    <rect class="panel" width="288" height="240" rx="8" />
+    <text class="h2" x="18" y="34">macOS</text>
+    <text class="muted" x="18" y="58">Transparent heavier colored bars.</text>
+    <g transform="translate(38 92)">
+      <rect class="macbar" width="212" height="56" rx="12" />
+      <text class="dark-muted" x="18" y="35">Menu bar</text>
+      <g transform="translate(139 11)">
+        <rect class="mac-track" x="0" y="0" width="54" height="15" rx="7.5" />
+        <rect class="gpt" x="0" y="0" width="34" height="15" rx="7.5" />
+        <rect class="mac-track" x="0" y="19" width="54" height="15" rx="7.5" />
+        <rect class="claude" x="0" y="19" width="19" height="15" rx="7.5" />
+      </g>
+    </g>
+  </g>
+
+  <g transform="translate(664 112)">
+    <rect class="panel" width="288" height="240" rx="8" />
+    <text class="h2" x="18" y="34">Ubuntu</text>
+    <text class="muted" x="18" y="58">Dark capsule for AppIndicator.</text>
+    <g transform="translate(38 92)">
+      <rect class="ubbar" width="212" height="56" rx="0" />
+      <text class="muted" x="18" y="35">Top bar</text>
+      <g transform="translate(145 12)">
+        <rect class="ubuntu-icon" width="48" height="32" rx="8" />
+        <rect class="track" x="7" y="8" width="34" height="6" rx="3" />
+        <rect class="gpt" x="7" y="8" width="22" height="6" rx="3" />
+        <rect class="track" x="7" y="19" width="34" height="6" rx="3" />
+        <rect class="claude" x="7" y="19" width="12" height="6" rx="3" />
+      </g>
+    </g>
+  </g>
+</svg>

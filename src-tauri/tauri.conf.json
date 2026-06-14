@@ -1,0 +1,43 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Usage Deck",
+  "version": "0.1.0",
+  "identifier": "com.local.usagedeck",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://127.0.0.1:5174",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Usage Deck",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 1040,
+        "minHeight": 680,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis", "msi"],
+    "externalBin": [
+      "binaries/ccusage-runner"
+    ],
+    "resources": [
+      "../resources/ccusage-runner/**/*",
+      "../node_modules/ccusage/**/*"
+    ],
+    "windows": {
+      "wix": {
+        "language": "en-US"
+      }
+    }
+  }
+}
