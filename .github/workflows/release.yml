@@ -110,4 +110,4 @@ jobs:
             Usage Deck ${{ github.ref_name }}
 
             Initial desktop release with Linux, macOS, and Windows bundles.
-          files: release-assets/*
+          files: release-assets/**/*
