@@ -43,11 +43,13 @@ export type TrayIndicatorSummary = {
 const STORAGE_KEY = "usage-deck.tray-indicator.v1";
 const DEFAULT_GPT = "#8AB4FF";
 const DEFAULT_CLAUDE = "#D98B4E";
+const DEFAULT_GEMINI = "#3DDC84";
+const OLD_DEFAULT_GEMINI = "#8AA7E8";
 
 const MODEL_COLORS = [
   "#8AB4FF",
   "#D98B4E",
-  "#6FB7A8",
+  "#3DDC84",
   "#D66F5D",
   "#B7A36F",
   "#9D8AD8",
@@ -202,7 +204,7 @@ export function resolveModelColor(target: TrayModelTarget, index = 0): string {
   }
 
   if (lower.includes("gemini")) {
-    return "#8AA7E8";
+    return DEFAULT_GEMINI;
   }
 
   return MODEL_COLORS[Math.abs(hashString(target) + index) % MODEL_COLORS.length];
@@ -226,7 +228,13 @@ function normalizeBar(input: unknown, fallback: TrayBarSetting): TrayBarSetting 
   const record = input && typeof input === "object" ? (input as Partial<TrayBarSetting>) : {};
   const legacyRecord = record as Partial<TrayBarSetting> & { colorMode?: "auto" | "custom" };
   const target = typeof record.target === "string" ? record.target : fallback.target;
+  const storedColor = isHexColor(record.customColor) ? record.customColor : null;
+  const explicitlyCustomColor = legacyRecord.colorMode === "custom";
   const preserveStoredColor = legacyRecord.colorMode === undefined ? isHexColor(record.customColor) : legacyRecord.colorMode === "custom";
+  const shouldMigrateGeminiDefault =
+    !explicitlyCustomColor &&
+    target.toLowerCase().includes("gemini") &&
+    storedColor?.toLowerCase() === OLD_DEFAULT_GEMINI.toLowerCase();
   return {
     id: typeof record.id === "string" ? record.id : fallback.id,
     enabled: typeof record.enabled === "boolean" ? record.enabled : fallback.enabled,
@@ -235,7 +243,7 @@ function normalizeBar(input: unknown, fallback: TrayBarSetting): TrayBarSetting 
     budgetType: record.budgetType === "cost" ? "cost" : record.budgetType === "tokens" ? "tokens" : fallback.budgetType,
     weeklyBudget: finiteNumber(record.weeklyBudget),
     monthlyBudget: finiteNumber(record.monthlyBudget),
-    customColor: isHexColor(record.customColor) && preserveStoredColor ? record.customColor : resolveModelColor(target)
+    customColor: storedColor && preserveStoredColor && !shouldMigrateGeminiDefault ? storedColor : resolveModelColor(target)
   };
 }
 
