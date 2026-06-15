@@ -360,11 +360,11 @@ export function App() {
   );
 
   useEffect(() => {
-    if (!window.__TAURI_INTERNALS__ || !traySettingsReady || isTrayPanel || !sameTraySettings(appliedTraySettings, traySettings)) {
+    if (!window.__TAURI_INTERNALS__ || !traySettingsReady || !lastRefresh || !sameTraySettings(appliedTraySettings, traySettings)) {
       return;
     }
     void invoke("update_tray_indicator", { summary: appliedTraySummary }).catch(() => undefined);
-  }, [appliedTraySettings, appliedTraySummary, isTrayPanel, traySettings, traySettingsReady]);
+  }, [appliedTraySettings, appliedTraySummary, lastRefresh, traySettings, traySettingsReady]);
 
   const criticalDiagnostics = usage.diagnostics.filter((item) => item.severity === "error");
 
