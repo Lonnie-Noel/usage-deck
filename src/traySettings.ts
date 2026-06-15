@@ -45,6 +45,7 @@ const DEFAULT_GPT = "#8AB4FF";
 const DEFAULT_CLAUDE = "#D98B4E";
 const DEFAULT_GEMINI = "#3DDC84";
 const OLD_DEFAULT_GEMINI = "#8AA7E8";
+const WINDOWS_TRAY_TOOLTIP_LIMIT = 63;
 
 const MODEL_COLORS = [
   "#8AB4FF",
@@ -144,7 +145,7 @@ export function buildTrayIndicatorSummary(settings: TrayIndicatorSettings, usage
     return {
       enabled: false,
       bars: [],
-      tooltip: "Usage Deck tray indicator is disabled."
+      tooltip: "Tray indicator disabled."
     };
   }
 
@@ -350,10 +351,11 @@ function targetLabel(target: TrayModelTarget): string {
 
 function buildTooltip(bars: TrayIndicatorBar[]): string {
   if (bars.length === 0) {
-    return "Usage Deck: no tray bars enabled";
+    return "No tray bars enabled";
   }
 
-  return ["Usage Deck", ...bars.map((bar) => `${bar.label} ${periodTooltipLabel(bar.period)}: ${budgetPairLabel(bar)}`)].join(" | ");
+  const tooltip = bars.map((bar) => trayTooltipSegment(bar, false)).join("\n");
+  return tooltip.length <= WINDOWS_TRAY_TOOLTIP_LIMIT ? tooltip : bars.map((bar) => trayTooltipSegment(bar, true)).join("\n");
 }
 
 function budgetValueForType(usage: Pick<ModelUsage, "totalTokens" | "costUSD">, type: TrayBudgetType): number {
@@ -361,21 +363,47 @@ function budgetValueForType(usage: Pick<ModelUsage, "totalTokens" | "costUSD">, 
 }
 
 function periodTooltipLabel(period: TrayBudgetPeriod): string {
-  return period === "week" ? "weekly" : "monthly";
+  return period === "week" ? "W" : "M";
+}
+
+function tooltipTargetLabel(label: string): string {
+  if (label === "GPT family") {
+    return "GPT";
+  }
+  if (label === "Claude family") {
+    return "Claude";
+  }
+  if (label === "Gemini family") {
+    return "Gemini";
+  }
+  if (label === "All models") {
+    return "All";
+  }
+  return label.length > 10 ? `${label.slice(0, 9)}...` : label;
+}
+
+function trayTooltipSegment(bar: TrayIndicatorBar, extraCompact: boolean): string {
+  const label = tooltipTargetLabel(bar.label);
+  const target = extraCompact && label.length > 6 ? label.slice(0, 6) : label;
+  return `${target} ${periodTooltipLabel(bar.period)} ${budgetPairLabel(bar)}`;
 }
 
 function budgetPairLabel(bar: TrayIndicatorBar): string {
   const budget =
     bar.budgetSource === "configured" && bar.budgetValue > 0
       ? shortBudgetValueForPair(bar.budgetValue, bar.budgetType)
-      : relativeBudgetLabel(bar.budgetType);
+      : relativeBudgetTooltipLabel(bar.budgetType);
   const used = shortBudgetValueForPair(bar.usedValue, bar.budgetType);
-  const suffix = bar.budgetType === "tokens" && !budget.includes("tokens") ? " tokens" : "";
+  const suffix = bar.budgetType === "tokens" ? " tk" : "";
   return `${used}/${budget}${suffix}`;
 }
 
 function shortBudgetValueForPair(value: number, type: TrayBudgetType): string {
   return type === "cost" ? shortMoney(value) : shortNumber(value);
+}
+
+function relativeBudgetTooltipLabel(type: TrayBudgetType): string {
+  return type === "cost" ? "rel$" : "rel";
 }
 
 function parseDateKey(value: string): Date | null {
