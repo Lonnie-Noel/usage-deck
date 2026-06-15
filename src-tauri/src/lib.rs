@@ -340,6 +340,34 @@ async fn resolve_runner(app: &AppHandle, mode: &str, diagnostics: &mut Vec<Diagn
         }),
     }
 
+    if let Some(program) = find_packaged_sidecar_runner(app) {
+        let runner = Runner {
+            kind: RunnerKind::Process {
+                program: program.to_string_lossy().to_string(),
+                prefix_args: Vec::new(),
+            },
+            label: "Bundled ccusage sidecar from packaged app path".to_string(),
+            mode: "bundled".to_string(),
+        };
+
+        match run_process(app, &runner, &["--version".to_string()]).await {
+            Ok((_, _, Some(0))) => return Some(runner),
+            Ok((stdout, stderr, status)) => diagnostics.push(Diagnostic {
+                severity: "warning".to_string(),
+                code: "packaged-sidecar-version-check-failed".to_string(),
+                message: format!(
+                    "Packaged ccusage sidecar did not pass version check with exit {:?}: {}{}",
+                    status, stdout, stderr
+                ),
+            }),
+            Err(message) => diagnostics.push(Diagnostic {
+                severity: "warning".to_string(),
+                code: "packaged-sidecar-unavailable".to_string(),
+                message,
+            }),
+        }
+    }
+
     if let Some(script) = find_internal_node_runner(app) {
         return Some(Runner {
             kind: RunnerKind::Process {
@@ -354,9 +382,29 @@ async fn resolve_runner(app: &AppHandle, mode: &str, diagnostics: &mut Vec<Diagn
     diagnostics.push(Diagnostic {
         severity: "error".to_string(),
         code: "bundled-runner-missing".to_string(),
-        message: "Bundled ccusage runner was not found. Use mock mode or build the Windows sidecar.".to_string(),
+        message: "Bundled ccusage runner was not found. Use mock mode or rebuild the platform sidecar.".to_string(),
     });
     None
+}
+
+fn find_packaged_sidecar_runner(app: &AppHandle) -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(parent) = current_exe.parent() {
+            candidates.push(parent.join(SIDECAR_NAME));
+        }
+    }
+
+    if let Ok(resource_dir) = app.path().resolve("", BaseDirectory::Resource) {
+        candidates.push(resource_dir.join(SIDECAR_NAME));
+        candidates.push(resource_dir.join("_up_").join(SIDECAR_NAME));
+    }
+
+    #[cfg(target_os = "linux")]
+    candidates.push(PathBuf::from("/usr/bin").join(SIDECAR_NAME));
+
+    candidates.into_iter().find(|path| path.is_file())
 }
 
 fn find_internal_node_runner(app: &AppHandle) -> Option<PathBuf> {
@@ -365,6 +413,7 @@ fn find_internal_node_runner(app: &AppHandle) -> Option<PathBuf> {
     if let Ok(resource_dir) = app.path().resolve("", BaseDirectory::Resource) {
         candidates.push(resource_dir.join("resources/ccusage-runner/run-ccusage.mjs"));
         candidates.push(resource_dir.join("ccusage-runner/run-ccusage.mjs"));
+        candidates.push(resource_dir.join("_up_/resources/ccusage-runner/run-ccusage.mjs"));
     }
 
     candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../resources/ccusage-runner/run-ccusage.mjs"));
