@@ -9,7 +9,7 @@ use tauri::path::BaseDirectory;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{
     image::Image, menu::MenuBuilder, AppHandle, Emitter, Manager, PhysicalPosition, WebviewUrl,
-    WebviewWindow, WebviewWindowBuilder,
+    WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
 use tauri_plugin_shell::ShellExt;
 
@@ -197,7 +197,12 @@ fn remove_tray_icon(app: &AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 async fn show_dashboard(app: AppHandle) -> Result<(), String> {
+    show_dashboard_window(&app)
+}
+
+fn show_dashboard_window(app: &AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
         window.show().map_err(|error| error.to_string())?;
         window.set_focus().map_err(|error| error.to_string())?;
     }
@@ -461,11 +466,29 @@ fn classify_failure_text(stdout: &str, stderr: &str) -> &'static str {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            let _ = show_dashboard_window(app);
+        }))
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
             apply_main_window_icon(app);
             setup_tray(app)?;
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if window.label() != "main" {
+                return;
+            }
+
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                let app = window.app_handle();
+                if tray_enabled(&app) {
+                    api.prevent_close();
+                    let _ = window.hide();
+                } else {
+                    let _ = remove_tray_icon(&app);
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             collect_usage,
@@ -502,10 +525,18 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
 }
 
 fn stored_tray_enabled(app: &tauri::App) -> Option<bool> {
-    let path = tray_settings_path(app.handle()).ok()?;
+    stored_tray_enabled_from_handle(app.handle())
+}
+
+fn stored_tray_enabled_from_handle(app: &AppHandle) -> Option<bool> {
+    let path = tray_settings_path(app).ok()?;
     let raw = fs::read_to_string(path).ok()?;
     let settings = serde_json::from_str::<Value>(&raw).ok()?;
     settings.get("enabled").and_then(Value::as_bool)
+}
+
+fn tray_enabled(app: &AppHandle) -> bool {
+    stored_tray_enabled_from_handle(app).unwrap_or(true)
 }
 
 fn setup_tray_icon<M: Manager<tauri::Wry>>(manager: &M, summary: &TrayIndicatorSummary) -> tauri::Result<()> {
@@ -527,12 +558,12 @@ fn setup_tray_icon<M: Manager<tauri::Wry>>(manager: &M, summary: &TrayIndicatorS
                 let _ = toggle_tray_panel(app);
             }
             "open_dashboard" => {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
+                let _ = show_dashboard_window(app);
             }
-            "quit" => app.exit(0),
+            "quit" => {
+                let _ = remove_tray_icon(app);
+                app.exit(0);
+            }
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {

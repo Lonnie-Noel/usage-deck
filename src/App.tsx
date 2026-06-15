@@ -106,6 +106,8 @@ type TrendPreferences = {
   metric: TrendMetric;
   displayMode: TrendDisplayMode;
   selectedTargets: TrendModelTarget[];
+  periodMode: PeriodMode;
+  customRange: DateRange;
 };
 
 type OverviewUsageScope = {
@@ -193,7 +195,9 @@ const TRAY_SETTINGS_SYNC_DELAY_MS = 300;
 const DEFAULT_TREND_PREFERENCES: TrendPreferences = {
   metric: "tokens",
   displayMode: "family",
-  selectedTargets: ["family:gpt", "family:claude", "family:gemini"]
+  selectedTargets: ["family:gpt", "family:claude", "family:gemini"],
+  periodMode: "month",
+  customRange: getPresetRange("month")
 };
 
 export function App() {
@@ -207,8 +211,6 @@ export function App() {
   const [loading, setLoading] = useState(false);
   const [traySettings, setTraySettings] = useState<TrayIndicatorSettings>(() => loadTraySettings());
   const [traySettingsReady, setTraySettingsReady] = useState(() => !window.__TAURI_INTERNALS__);
-  const [dailyPeriodMode, setDailyPeriodMode] = useState<PeriodMode>("month");
-  const [customDateRange, setCustomDateRange] = useState<DateRange>(() => getPresetRange("month"));
   const [trendPreferences, setTrendPreferences] = useState<TrendPreferences>(() => loadTrendPreferences());
   const [usage, setUsage] = useState<NormalizedUsage>(() =>
     normalizeUsage(createMockCollection("Initial dashboard preview."))
@@ -217,6 +219,8 @@ export function App() {
   const trendMetric = trendPreferences.metric;
   const trendDisplayMode = trendPreferences.displayMode;
   const selectedTrendTargets = trendPreferences.selectedTargets;
+  const dailyPeriodMode = trendPreferences.periodMode;
+  const customDateRange = trendPreferences.customRange;
   const setTrendMetric = useCallback(
     (metric: TrendMetric) => setTrendPreferences((current) => ({ ...current, metric })),
     []
@@ -227,6 +231,14 @@ export function App() {
   );
   const setSelectedTrendTargets = useCallback(
     (selectedTargets: TrendModelTarget[]) => setTrendPreferences((current) => ({ ...current, selectedTargets })),
+    []
+  );
+  const setDailyPeriodMode = useCallback(
+    (periodMode: PeriodMode) => setTrendPreferences((current) => ({ ...current, periodMode })),
+    []
+  );
+  const setCustomDateRange = useCallback(
+    (customRange: DateRange) => setTrendPreferences((current) => ({ ...current, customRange })),
     []
   );
 
@@ -2283,7 +2295,9 @@ function normalizeTrendPreferences(input: unknown): TrendPreferences {
   return {
     metric: isTrendMetric(record.metric) ? record.metric : DEFAULT_TREND_PREFERENCES.metric,
     displayMode,
-    selectedTargets: displayMode === "total" ? ["all"] : selectedTargets
+    selectedTargets: displayMode === "total" ? ["all"] : selectedTargets,
+    periodMode: isPeriodMode(record.periodMode) ? record.periodMode : DEFAULT_TREND_PREFERENCES.periodMode,
+    customRange: normalizeStoredDateRange(record.customRange)
   };
 }
 
@@ -2293,6 +2307,27 @@ function isTrendMetric(value: unknown): value is TrendMetric {
 
 function isTrendDisplayMode(value: unknown): value is TrendDisplayMode {
   return value === "total" || value === "model" || value === "family";
+}
+
+function isPeriodMode(value: unknown): value is PeriodMode {
+  return value === "12hrs" || value === "day" || value === "week" || value === "month" || value === "custom";
+}
+
+function normalizeStoredDateRange(value: unknown): DateRange {
+  if (!value || typeof value !== "object") {
+    return DEFAULT_TREND_PREFERENCES.customRange;
+  }
+
+  const range = value as Partial<DateRange>;
+  if (!isDateKeyString(range.start) || !isDateKeyString(range.end)) {
+    return DEFAULT_TREND_PREFERENCES.customRange;
+  }
+
+  return normalizeDateRange({ start: range.start, end: range.end });
+}
+
+function isDateKeyString(value: unknown): value is string {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
 }
 
 function sameTraySettings(left: TrayIndicatorSettings, right: TrayIndicatorSettings): boolean {
