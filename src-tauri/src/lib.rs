@@ -339,6 +339,13 @@ async fn resolve_runner(app: &AppHandle, mode: &str, diagnostics: &mut Vec<Diagn
             message,
         }),
     }
+    if diagnostics
+        .last()
+        .map(|diagnostic| diagnostic.code == "sidecar-version-check-failed")
+        .unwrap_or(false)
+    {
+        return Some(sidecar);
+    }
 
     if let Some(program) = find_packaged_sidecar_runner(app) {
         let runner = Runner {
@@ -365,6 +372,13 @@ async fn resolve_runner(app: &AppHandle, mode: &str, diagnostics: &mut Vec<Diagn
                 code: "packaged-sidecar-unavailable".to_string(),
                 message,
             }),
+        }
+        if diagnostics
+            .last()
+            .map(|diagnostic| diagnostic.code == "packaged-sidecar-version-check-failed")
+            .unwrap_or(false)
+        {
+            return Some(runner);
         }
     }
 
