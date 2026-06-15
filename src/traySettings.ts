@@ -149,13 +149,17 @@ export function buildTrayIndicatorSummary(settings: TrayIndicatorSettings, usage
   }
 
   const activeSettings = settings.bars.filter((bar) => bar.enabled).slice(0, 2);
+  const periodRows = {
+    week: usage.daily,
+    month: usage.monthly.length > 0 ? usage.monthly : usage.daily
+  };
   const periodTotals = {
-    week: totalPeriodUsage(usage.daily, "week"),
-    month: totalPeriodUsage(usage.daily, "month")
+    week: totalPeriodUsage(periodRows.week, "week"),
+    month: totalPeriodUsage(periodRows.month, "month")
   };
 
   const bars = activeSettings.map((bar, index) => {
-    const stats = sumTargetUsage(usage.daily, bar.target, bar.period);
+    const stats = sumTargetUsage(periodRows[bar.period], bar.target, bar.period);
     const configuredBudget = bar.period === "week" ? bar.weeklyBudget : bar.monthlyBudget;
     const usedValue = budgetValueForType(stats, bar.budgetType);
     const relativeBudget = budgetValueForType(periodTotals[bar.period], bar.budgetType);

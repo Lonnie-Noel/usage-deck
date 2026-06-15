@@ -463,6 +463,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
+            apply_main_window_icon(app);
             setup_tray(app)?;
             Ok(())
         })
@@ -476,6 +477,20 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running Usage Deck");
+}
+
+fn apply_main_window_icon(app: &mut tauri::App) {
+    let icon = app.default_window_icon().cloned();
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+
+    if let Some(icon) = icon {
+        let _ = window.set_icon(icon);
+    }
+
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    let _ = window.set_skip_taskbar(false);
 }
 
 fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {

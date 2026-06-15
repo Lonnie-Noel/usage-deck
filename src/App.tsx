@@ -189,6 +189,7 @@ const knownModelCandidates = [
 const THEME_STORAGE_KEY = "usage-deck.theme";
 const TREND_PREFERENCES_STORAGE_KEY = "usage-deck.trend-preferences.v1";
 const SYSTEM_THEME_QUERY = "(prefers-color-scheme: dark)";
+const TRAY_SETTINGS_SYNC_DELAY_MS = 300;
 const DEFAULT_TREND_PREFERENCES: TrendPreferences = {
   metric: "tokens",
   displayMode: "family",
@@ -212,6 +213,7 @@ export function App() {
   const [usage, setUsage] = useState<NormalizedUsage>(() =>
     normalizeUsage(createMockCollection("Initial dashboard preview."))
   );
+  const appliedTraySettings = useDebouncedValue(traySettings, TRAY_SETTINGS_SYNC_DELAY_MS);
   const trendMetric = trendPreferences.metric;
   const trendDisplayMode = trendPreferences.displayMode;
   const selectedTrendTargets = trendPreferences.selectedTargets;
@@ -326,21 +328,22 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (!traySettingsReady) {
+    if (!traySettingsReady || !sameTraySettings(appliedTraySettings, traySettings)) {
       return;
     }
 
-    saveTraySettings(traySettings);
-    if (window.__TAURI_INTERNALS__) {
-      void invoke("save_tray_settings", { settings: traySettings }).catch(() => undefined);
+    saveTraySettings(appliedTraySettings);
+    if (window.__TAURI_INTERNALS__ && !isTrayPanel) {
+      void invoke("save_tray_settings", { settings: appliedTraySettings }).catch(() => undefined);
     }
-  }, [traySettings, traySettingsReady]);
+  }, [appliedTraySettings, isTrayPanel, traySettings, traySettingsReady]);
 
   useEffect(() => {
     saveTrendPreferences(trendPreferences);
   }, [trendPreferences]);
 
   const traySummary = useMemo(() => buildTrayIndicatorSummary(traySettings, usage), [traySettings, usage]);
+  const appliedTraySummary = useMemo(() => buildTrayIndicatorSummary(appliedTraySettings, usage), [appliedTraySettings, usage]);
   const modelOptions = useMemo(() => buildModelOptions(usage), [usage]);
   const trendModelCatalog = useMemo(() => buildTrendModelFilterCatalog(usage), [usage]);
   const activeDailyRange = useMemo(
@@ -357,11 +360,11 @@ export function App() {
   );
 
   useEffect(() => {
-    if (!window.__TAURI_INTERNALS__ || !traySettingsReady) {
+    if (!window.__TAURI_INTERNALS__ || !traySettingsReady || isTrayPanel || !sameTraySettings(appliedTraySettings, traySettings)) {
       return;
     }
-    void invoke("update_tray_indicator", { summary: traySummary }).catch(() => undefined);
-  }, [traySettingsReady, traySummary]);
+    void invoke("update_tray_indicator", { summary: appliedTraySummary }).catch(() => undefined);
+  }, [appliedTraySettings, appliedTraySummary, isTrayPanel, traySettings, traySettingsReady]);
 
   const criticalDiagnostics = usage.diagnostics.filter((item) => item.severity === "error");
 
@@ -2229,6 +2232,17 @@ function loadTheme(): AppTheme {
 
   const theme = window.localStorage.getItem(THEME_STORAGE_KEY);
   return theme === "dark" || theme === "light" || theme === "system" ? theme : "system";
+}
+
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debouncedValue, setDebouncedValue] = useState(value);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedValue(value), delayMs);
+    return () => window.clearTimeout(timer);
+  }, [delayMs, value]);
+
+  return debouncedValue;
 }
 
 function loadTrendPreferences(): TrendPreferences {
