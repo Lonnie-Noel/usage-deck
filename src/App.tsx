@@ -392,7 +392,6 @@ export function App() {
     <main className="app-shell">
       <aside className="rail">
         <div className="brand-lockup">
-          <div className="brand-mark">UD</div>
           <div>
             <h1>Usage Deck</h1>
             <span>AI token and cost dashboard</span>
@@ -1310,8 +1309,8 @@ function TrayPanel({
 }) {
   return (
     <main className="tray-panel-shell">
-      <header className="tray-panel-header" data-tauri-drag-region>
-        <div data-tauri-drag-region>
+      <header className="tray-panel-header">
+        <div>
           <strong>Usage Deck</strong>
           <span>{sourceLabel(usage.collection.effectiveSourceMode)}</span>
         </div>

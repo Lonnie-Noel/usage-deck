@@ -227,18 +227,25 @@ fn tray_settings_path(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 fn remove_tray_icon(app: &AppHandle) -> Result<(), String> {
-    let app = app.clone();
-    app.clone()
-        .run_on_main_thread(move || {
-            let _removed_tray = app.remove_tray_by_id(TRAY_ID);
-        })
-        .map_err(|error| format!("Failed to remove tray icon: {error}"))
+    let _removed_tray = app.remove_tray_by_id(TRAY_ID);
+    Ok(())
 }
 
 fn close_tray_panel(app: &AppHandle) {
     if let Some(panel) = app.get_webview_window(TRAY_PANEL_LABEL) {
         let _ = panel.close();
     }
+}
+
+fn cleanup_tray_before_exit(app: &AppHandle) {
+    close_tray_panel(app);
+    set_tray_runtime_enabled(app, false);
+    let _ = remove_tray_icon(app);
+}
+
+fn request_app_exit(app: &AppHandle, code: i32) {
+    cleanup_tray_before_exit(app);
+    app.exit(code);
 }
 
 #[tauri::command]
@@ -533,9 +540,7 @@ pub fn run() {
                     let _ = window.hide();
                 } else {
                     api.prevent_close();
-                    let _ = remove_tray_icon(&app);
-                    close_tray_panel(&app);
-                    app.exit(0);
+                    request_app_exit(&app, 0);
                 }
             }
         })
@@ -549,10 +554,11 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building Usage Deck")
-        .run(|app, event| {
-            if matches!(event, RunEvent::Exit) {
-                let _ = remove_tray_icon(app);
+        .run(|app, event| match event {
+            RunEvent::ExitRequested { .. } | RunEvent::Exit => {
+                cleanup_tray_before_exit(app);
             }
+            _ => {}
         });
 }
 
@@ -628,8 +634,7 @@ fn setup_tray_icon<M: Manager<tauri::Wry>>(manager: &M, summary: &TrayIndicatorS
                 let _ = show_dashboard_window(app);
             }
             "quit" => {
-                let _ = remove_tray_icon(app);
-                app.exit(0);
+                request_app_exit(app, 0);
             }
             _ => {}
         })

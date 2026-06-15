@@ -103,23 +103,8 @@ input:focus-visible {
 }
 
 .brand-lockup {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.brand-mark {
-  width: 42px;
-  height: 42px;
-  border: 1px solid #5a776f;
-  border-radius: 6px;
   display: grid;
-  place-items: center;
-  background: #17231f;
-  color: var(--ledger);
-  font-size: 13px;
-  font-weight: 800;
-  font-variant-numeric: tabular-nums;
+  gap: 4px;
 }
 
 .brand-lockup h1,
@@ -839,12 +824,14 @@ td:first-child {
 .sessions-table.compact tr {
   display: grid;
   grid-template-columns: minmax(12ch, 1.65fr) repeat(4, minmax(0, 1fr));
-  align-items: start;
+  align-items: stretch;
+  border-bottom: 1px solid #2a3139;
 }
 
 .sessions-table.compact th,
 .sessions-table.compact td {
   min-width: 0;
+  border-bottom: 0;
 }
 
 .sessions-table.compact th:first-child {
@@ -1125,11 +1112,6 @@ td:first-child {
   gap: 10px;
 }
 
-.tray-panel-header {
-  cursor: move;
-  user-select: none;
-}
-
 .tray-panel-header > div {
   min-width: 0;
   display: grid;
@@ -1246,11 +1228,6 @@ td:first-child {
 
 :root[data-theme="light"] .rail {
   background: #eef3f8;
-}
-
-:root[data-theme="light"] .brand-mark {
-  border-color: #a8c9c1;
-  background: #e4f3ef;
 }
 
 :root[data-theme="light"] .nav-item:hover,
@@ -1387,7 +1364,7 @@ td:first-child {
     grid-template-columns: 76px minmax(0, 1fr);
   }
 
-  .brand-lockup div:last-child,
+  .brand-lockup,
   .nav-item span,
   .source-chip span,
   .version-text {
