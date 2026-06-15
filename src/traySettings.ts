@@ -363,7 +363,7 @@ function budgetValueForType(usage: Pick<ModelUsage, "totalTokens" | "costUSD">, 
 }
 
 function periodTooltipLabel(period: TrayBudgetPeriod): string {
-  return period === "week" ? "W" : "M";
+  return period === "week" ? "Weekly" : "Month";
 }
 
 function tooltipTargetLabel(label: string): string {

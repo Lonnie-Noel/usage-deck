@@ -826,14 +826,25 @@ td:first-child {
 }
 
 .sessions-table.compact table {
-  min-width: calc(10ch + 332px);
-  table-layout: fixed;
+  min-width: 0;
+  table-layout: auto;
+  display: block;
 }
 
-.sessions-table.compact th:first-child,
-.sessions-table.compact td:first-child {
-  width: auto;
-  min-width: 10ch;
+.sessions-table.compact thead,
+.sessions-table.compact tbody {
+  display: block;
+}
+
+.sessions-table.compact tr {
+  display: grid;
+  grid-template-columns: minmax(12ch, 1.65fr) repeat(4, minmax(0, 1fr));
+  align-items: start;
+}
+
+.sessions-table.compact th,
+.sessions-table.compact td {
+  min-width: 0;
 }
 
 .sessions-table.compact th:first-child {
@@ -858,25 +869,16 @@ td:first-child {
   mask-image: linear-gradient(90deg, #000 78%, transparent);
 }
 
-.sessions-table.compact th:nth-child(2),
-.sessions-table.compact td:nth-child(2) {
-  width: clamp(120px, 18vw, 138px);
-}
-
-.sessions-table.compact th:nth-child(3),
-.sessions-table.compact td:nth-child(3) {
-  width: clamp(64px, 11vw, 86px);
-}
-
-.sessions-table.compact th:nth-child(4),
-.sessions-table.compact td:nth-child(4) {
-  width: clamp(56px, 9vw, 68px);
-}
-
 .sessions-table.compact th:nth-child(5),
 .sessions-table.compact td:nth-child(5) {
-  width: clamp(92px, 16vw, 128px);
   overflow-wrap: anywhere;
+}
+
+.sessions-table.compact td:not(:first-child) .table-cell-text,
+.sessions-table.compact th:not(:first-child) {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .sessions-table.compact th:nth-child(2),

@@ -1316,15 +1316,15 @@ function TrayPanel({
           <span>{sourceLabel(usage.collection.effectiveSourceMode)}</span>
         </div>
         <div className="tray-panel-actions">
-          <button className="icon-command compact" onClick={onRefresh} disabled={loading} aria-label="Refresh usage">
-            <RefreshCw className={loading ? "spin" : ""} />
-          </button>
           <button
             className="icon-command compact"
             onClick={() => void invoke("hide_tray_panel").catch(() => undefined)}
             aria-label="Close quick panel"
           >
             <X />
+          </button>
+          <button className="icon-command compact" onClick={onRefresh} disabled={loading} aria-label="Refresh usage">
+            <RefreshCw className={loading ? "spin" : ""} />
           </button>
         </div>
       </header>
