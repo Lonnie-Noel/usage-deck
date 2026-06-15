@@ -216,6 +216,10 @@ export function App() {
     normalizeUsage(createMockCollection("Initial dashboard preview."))
   );
   const appliedTraySettings = useDebouncedValue(traySettings, TRAY_SETTINGS_SYNC_DELAY_MS);
+  const nativeTraySettings = useMemo(
+    () => mergeImmediateTraySettings(traySettings, appliedTraySettings),
+    [appliedTraySettings, traySettings]
+  );
   const trendMetric = trendPreferences.metric;
   const trendDisplayMode = trendPreferences.displayMode;
   const selectedTrendTargets = trendPreferences.selectedTargets;
@@ -340,22 +344,22 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (!traySettingsReady || !sameTraySettings(appliedTraySettings, traySettings)) {
+    if (!traySettingsReady) {
       return;
     }
 
-    saveTraySettings(appliedTraySettings);
+    saveTraySettings(nativeTraySettings);
     if (window.__TAURI_INTERNALS__ && !isTrayPanel) {
-      void invoke("save_tray_settings", { settings: appliedTraySettings }).catch(() => undefined);
+      void invoke("save_tray_settings", { settings: nativeTraySettings }).catch(() => undefined);
     }
-  }, [appliedTraySettings, isTrayPanel, traySettings, traySettingsReady]);
+  }, [isTrayPanel, nativeTraySettings, traySettingsReady]);
 
   useEffect(() => {
     saveTrendPreferences(trendPreferences);
   }, [trendPreferences]);
 
   const traySummary = useMemo(() => buildTrayIndicatorSummary(traySettings, usage), [traySettings, usage]);
-  const appliedTraySummary = useMemo(() => buildTrayIndicatorSummary(appliedTraySettings, usage), [appliedTraySettings, usage]);
+  const nativeTraySummary = useMemo(() => buildTrayIndicatorSummary(nativeTraySettings, usage), [nativeTraySettings, usage]);
   const modelOptions = useMemo(() => buildModelOptions(usage), [usage]);
   const trendModelCatalog = useMemo(() => buildTrendModelFilterCatalog(usage), [usage]);
   const activeDailyRange = useMemo(
@@ -372,11 +376,11 @@ export function App() {
   );
 
   useEffect(() => {
-    if (!window.__TAURI_INTERNALS__ || !traySettingsReady || !lastRefresh || !sameTraySettings(appliedTraySettings, traySettings)) {
+    if (!window.__TAURI_INTERNALS__ || !traySettingsReady || (nativeTraySummary.enabled && !lastRefresh)) {
       return;
     }
-    void invoke("update_tray_indicator", { summary: appliedTraySummary }).catch(() => undefined);
-  }, [appliedTraySettings, appliedTraySummary, lastRefresh, traySettings, traySettingsReady]);
+    void invoke("update_tray_indicator", { summary: nativeTraySummary }).catch(() => undefined);
+  }, [lastRefresh, nativeTraySummary, traySettingsReady]);
 
   const criticalDiagnostics = usage.diagnostics.filter((item) => item.severity === "error");
 
@@ -2332,6 +2336,40 @@ function isDateKeyString(value: unknown): value is string {
 
 function sameTraySettings(left: TrayIndicatorSettings, right: TrayIndicatorSettings): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function mergeImmediateTraySettings(current: TrayIndicatorSettings, debounced: TrayIndicatorSettings): TrayIndicatorSettings {
+  if (sameTraySettingsExceptColors(current, debounced)) {
+    return debounced;
+  }
+
+  return {
+    ...current,
+    bars: current.bars.map((bar, index) => ({
+      ...bar,
+      customColor: debounced.bars[index]?.customColor ?? bar.customColor
+    })) as [TrayBarSetting, TrayBarSetting]
+  };
+}
+
+function sameTraySettingsExceptColors(left: TrayIndicatorSettings, right: TrayIndicatorSettings): boolean {
+  if (left.enabled !== right.enabled || left.bars.length !== right.bars.length) {
+    return false;
+  }
+
+  return left.bars.every((bar, index) => {
+    const other = right.bars[index];
+    return (
+      Boolean(other) &&
+      bar.id === other.id &&
+      bar.enabled === other.enabled &&
+      bar.target === other.target &&
+      bar.period === other.period &&
+      bar.budgetType === other.budgetType &&
+      bar.weeklyBudget === other.weeklyBudget &&
+      bar.monthlyBudget === other.monthlyBudget
+    );
+  });
 }
 
 function resolveSystemTheme(): ResolvedAppTheme {

@@ -5,6 +5,7 @@ use std::fs;
 use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::Mutex;
 use tauri::path::BaseDirectory;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{
@@ -81,6 +82,29 @@ struct Runner {
 }
 
 #[derive(Debug)]
+struct TrayRuntimeState {
+    enabled: Mutex<bool>,
+}
+
+impl TrayRuntimeState {
+    fn new(enabled: bool) -> Self {
+        Self {
+            enabled: Mutex::new(enabled),
+        }
+    }
+
+    fn set_enabled(&self, enabled: bool) {
+        if let Ok(mut current) = self.enabled.lock() {
+            *current = enabled;
+        }
+    }
+
+    fn is_enabled(&self) -> bool {
+        self.enabled.lock().map(|current| *current).unwrap_or(true)
+    }
+}
+
+#[derive(Debug)]
 enum RunnerKind {
     Sidecar,
     Process {
@@ -129,10 +153,10 @@ async fn collect_usage(app: AppHandle, source_mode: String) -> UsageCollection {
 
 #[tauri::command]
 async fn update_tray_indicator(app: AppHandle, summary: TrayIndicatorSummary) -> Result<(), String> {
+    set_tray_runtime_enabled(&app, summary.enabled);
+
     if !summary.enabled {
-        if let Some(panel) = app.get_webview_window(TRAY_PANEL_LABEL) {
-            let _ = panel.hide();
-        }
+        close_tray_panel(&app);
         remove_tray_icon(&app)?;
         return Ok(());
     }
@@ -166,6 +190,19 @@ fn load_tray_settings(app: AppHandle) -> Result<Option<Value>, String> {
 
 #[tauri::command]
 fn save_tray_settings(app: AppHandle, settings: Value) -> Result<(), String> {
+    if let Some(enabled) = settings.get("enabled").and_then(Value::as_bool) {
+        set_tray_runtime_enabled(&app, enabled);
+        if enabled {
+            if app.tray_by_id(TRAY_ID).is_none() {
+                setup_tray_icon(&app, &default_tray_summary())
+                    .map_err(|error| format!("Failed to create tray icon: {error}"))?;
+            }
+        } else {
+            close_tray_panel(&app);
+            remove_tray_icon(&app)?;
+        }
+    }
+
     let path = tray_settings_path(&app)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| format!("Failed to create tray settings directory: {error}"))?;
@@ -193,6 +230,12 @@ fn remove_tray_icon(app: &AppHandle) -> Result<(), String> {
             let _removed_tray = app.remove_tray_by_id(TRAY_ID);
         })
         .map_err(|error| format!("Failed to remove tray icon: {error}"))
+}
+
+fn close_tray_panel(app: &AppHandle) {
+    if let Some(panel) = app.get_webview_window(TRAY_PANEL_LABEL) {
+        let _ = panel.close();
+    }
 }
 
 #[tauri::command]
@@ -486,7 +529,10 @@ pub fn run() {
                     api.prevent_close();
                     let _ = window.hide();
                 } else {
+                    api.prevent_close();
                     let _ = remove_tray_icon(&app);
+                    close_tray_panel(&app);
+                    app.exit(0);
                 }
             }
         })
@@ -517,7 +563,10 @@ fn apply_main_window_icon(app: &mut tauri::App) {
 }
 
 fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
-    if stored_tray_enabled(app) == Some(false) {
+    let enabled = stored_tray_enabled(app).unwrap_or(true);
+    app.manage(TrayRuntimeState::new(enabled));
+
+    if !enabled {
         return Ok(());
     }
 
@@ -536,7 +585,17 @@ fn stored_tray_enabled_from_handle(app: &AppHandle) -> Option<bool> {
 }
 
 fn tray_enabled(app: &AppHandle) -> bool {
-    stored_tray_enabled_from_handle(app).unwrap_or(true)
+    let runtime_enabled = app
+        .try_state::<TrayRuntimeState>()
+        .map(|state| state.is_enabled())
+        .unwrap_or_else(|| stored_tray_enabled_from_handle(app).unwrap_or(true));
+    runtime_enabled && app.tray_by_id(TRAY_ID).is_some()
+}
+
+fn set_tray_runtime_enabled(app: &AppHandle, enabled: bool) {
+    if let Some(state) = app.try_state::<TrayRuntimeState>() {
+        state.set_enabled(enabled);
+    }
 }
 
 fn setup_tray_icon<M: Manager<tauri::Wry>>(manager: &M, summary: &TrayIndicatorSummary) -> tauri::Result<()> {
