@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import {
   Activity,
   AlertTriangle,
@@ -16,6 +17,7 @@ import {
   RefreshCw,
   Settings,
   Terminal,
+  X,
   Zap
 } from "lucide-react";
 import {
@@ -72,6 +74,7 @@ import {
 type ViewKey = "overview" | "daily" | "monthly" | "sessions" | "blocks" | "settings";
 type AppTheme = "dark" | "light" | "system";
 type ResolvedAppTheme = Exclude<AppTheme, "system">;
+type TrendMetric = "tokens" | "cost";
 type TrendDisplayMode = "total" | "model" | "family";
 type MonthlyMetric = "cost" | "tokens";
 type TrendFamilyTarget = "family:gpt" | "family:claude" | "family:gemini" | "family:other";
@@ -97,6 +100,12 @@ type TrendResult = {
   rows: UsageTrendPoint[];
   series: TrendSeries[];
   hasData: boolean;
+};
+
+type TrendPreferences = {
+  metric: TrendMetric;
+  displayMode: TrendDisplayMode;
+  selectedTargets: TrendModelTarget[];
 };
 
 type OverviewUsageScope = {
@@ -154,6 +163,11 @@ const trendDisplayOptions: Array<{ mode: TrendDisplayMode; label: string }> = [
   { mode: "family", label: "By family" }
 ];
 
+const trendMetricOptions: Array<{ metric: TrendMetric; label: string }> = [
+  { metric: "tokens", label: "Tokens" },
+  { metric: "cost", label: "Cost" }
+];
+
 const familyTargets: Array<{ value: TrendFamilyTarget; label: string }> = [
   { value: "family:gpt", label: "GPT / OpenAI family" },
   { value: "family:claude", label: "Claude family" },
@@ -173,7 +187,13 @@ const knownModelCandidates = [
 ];
 
 const THEME_STORAGE_KEY = "usage-deck.theme";
+const TREND_PREFERENCES_STORAGE_KEY = "usage-deck.trend-preferences.v1";
 const SYSTEM_THEME_QUERY = "(prefers-color-scheme: dark)";
+const DEFAULT_TREND_PREFERENCES: TrendPreferences = {
+  metric: "tokens",
+  displayMode: "family",
+  selectedTargets: ["family:gpt", "family:claude", "family:gemini"]
+};
 
 export function App() {
   const isTrayPanel = new URLSearchParams(window.location.search).get("panel") === "tray";
@@ -188,14 +208,24 @@ export function App() {
   const [traySettingsReady, setTraySettingsReady] = useState(() => !window.__TAURI_INTERNALS__);
   const [dailyPeriodMode, setDailyPeriodMode] = useState<PeriodMode>("month");
   const [customDateRange, setCustomDateRange] = useState<DateRange>(() => getPresetRange("month"));
-  const [trendDisplayMode, setTrendDisplayMode] = useState<TrendDisplayMode>("family");
-  const [selectedTrendTargets, setSelectedTrendTargets] = useState<TrendModelTarget[]>([
-    "family:gpt",
-    "family:claude",
-    "family:gemini"
-  ]);
+  const [trendPreferences, setTrendPreferences] = useState<TrendPreferences>(() => loadTrendPreferences());
   const [usage, setUsage] = useState<NormalizedUsage>(() =>
     normalizeUsage(createMockCollection("Initial dashboard preview."))
+  );
+  const trendMetric = trendPreferences.metric;
+  const trendDisplayMode = trendPreferences.displayMode;
+  const selectedTrendTargets = trendPreferences.selectedTargets;
+  const setTrendMetric = useCallback(
+    (metric: TrendMetric) => setTrendPreferences((current) => ({ ...current, metric })),
+    []
+  );
+  const setTrendDisplayMode = useCallback(
+    (displayMode: TrendDisplayMode) => setTrendPreferences((current) => ({ ...current, displayMode })),
+    []
+  );
+  const setSelectedTrendTargets = useCallback(
+    (selectedTargets: TrendModelTarget[]) => setTrendPreferences((current) => ({ ...current, selectedTargets })),
+    []
   );
 
   const loadData = useCallback(async () => {
@@ -269,6 +299,33 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    if (!window.__TAURI_INTERNALS__) {
+      return;
+    }
+
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    void listen<unknown>("tray-settings-changed", (event) => {
+      const normalizedSettings = normalizeTraySettings(event.payload);
+      saveTraySettings(normalizedSettings);
+      setTraySettings((current) => (sameTraySettings(current, normalizedSettings) ? current : normalizedSettings));
+    })
+      .then((nextUnlisten) => {
+        if (cancelled) {
+          nextUnlisten();
+        } else {
+          unlisten = nextUnlisten;
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
     if (!traySettingsReady) {
       return;
     }
@@ -278,6 +335,10 @@ export function App() {
       void invoke("save_tray_settings", { settings: traySettings }).catch(() => undefined);
     }
   }, [traySettings, traySettingsReady]);
+
+  useEffect(() => {
+    saveTrendPreferences(trendPreferences);
+  }, [trendPreferences]);
 
   const traySummary = useMemo(() => buildTrayIndicatorSummary(traySettings, usage), [traySettings, usage]);
   const modelOptions = useMemo(() => buildModelOptions(usage), [usage]);
@@ -291,8 +352,8 @@ export function App() {
   );
   const activeDailyRows = useMemo(() => filterUsageByRange(usage.daily, activeDailyRange), [activeDailyRange, usage.daily]);
   const activeTrend = useMemo(
-    () => buildTrendRows(usage, dailyPeriodMode, activeDailyRange, trendDisplayMode, selectedTrendTargets, trendModelCatalog),
-    [activeDailyRange, dailyPeriodMode, selectedTrendTargets, trendDisplayMode, trendModelCatalog, usage]
+    () => buildTrendRows(usage, dailyPeriodMode, activeDailyRange, trendDisplayMode, selectedTrendTargets, trendModelCatalog, trendMetric),
+    [activeDailyRange, dailyPeriodMode, selectedTrendTargets, trendDisplayMode, trendMetric, trendModelCatalog, usage]
   );
 
   useEffect(() => {
@@ -374,6 +435,7 @@ export function App() {
             <Overview
               usage={usage}
               trend={activeTrend}
+              trendMetric={trendMetric}
               trendMode={dailyPeriodMode}
               trendRange={activeDailyRange}
               selectedTargets={selectedTrendTargets}
@@ -386,11 +448,13 @@ export function App() {
               periodMode={dailyPeriodMode}
               activeRange={activeDailyRange}
               customRange={customDateRange}
+              trendMetric={trendMetric}
               displayMode={trendDisplayMode}
               selectedTargets={selectedTrendTargets}
               modelCatalog={trendModelCatalog}
               onPeriodMode={setDailyPeriodMode}
               onCustomRange={setCustomDateRange}
+              onTrendMetric={setTrendMetric}
               onDisplayMode={setTrendDisplayMode}
               onSelectedTargets={setSelectedTrendTargets}
             />
@@ -422,12 +486,14 @@ export function App() {
 function Overview({
   usage,
   trend,
+  trendMetric,
   trendMode,
   trendRange,
   selectedTargets
 }: {
   usage: NormalizedUsage;
   trend: TrendResult;
+  trendMetric: TrendMetric;
   trendMode: PeriodMode;
   trendRange: DateRange;
   selectedTargets: TrendModelTarget[];
@@ -470,8 +536,16 @@ function Overview({
       />
 
       <section className="panel trend-panel">
-        <PanelTitle icon={CalendarDays} title="Token trend" meta={`${formatTrendMeta(trendMode, trendRange)} · ${scopeMeta}`} />
-        {trend.hasData ? <DailyChart data={trend.rows} series={trend.series} /> : <EmptyState text="No usage rows were returned." />}
+        <PanelTitle
+          icon={CalendarDays}
+          title={`${formatTrendMetricLabel(trendMetric)} trend`}
+          meta={`${formatTrendMeta(trendMode, trendRange)} · ${scopeMeta}`}
+        />
+        {trend.hasData ? (
+          <DailyChart data={trend.rows} series={trend.series} metric={trendMetric} />
+        ) : (
+          <EmptyState text="No usage rows were returned." />
+        )}
       </section>
 
       <section className="panel model-panel">
@@ -513,11 +587,13 @@ function DailyView({
   periodMode,
   activeRange,
   customRange,
+  trendMetric,
   displayMode,
   selectedTargets,
   modelCatalog,
   onPeriodMode,
   onCustomRange,
+  onTrendMetric,
   onDisplayMode,
   onSelectedTargets
 }: {
@@ -526,17 +602,26 @@ function DailyView({
   periodMode: PeriodMode;
   activeRange: DateRange;
   customRange: DateRange;
+  trendMetric: TrendMetric;
   displayMode: TrendDisplayMode;
   selectedTargets: TrendModelTarget[];
   modelCatalog: TrendModelFilterCatalog;
   onPeriodMode: (mode: PeriodMode) => void;
   onCustomRange: (range: DateRange) => void;
+  onTrendMetric: (metric: TrendMetric) => void;
   onDisplayMode: (mode: TrendDisplayMode) => void;
   onSelectedTargets: (targets: TrendModelTarget[]) => void;
 }) {
   const showHourlyRows = isHourlyTrendMode(periodMode);
   const hourlyMeta = periodMode === "12hrs" ? "12 hours" : "24 hours";
   const trendRows = trend.rows;
+  const trendColumns = showHourlyRows
+    ? trendMetric === "cost"
+      ? ["Hour", "Cost", "Tokens", "Sessions"]
+      : ["Hour", "Tokens", "Cost", "Sessions"]
+    : trendMetric === "cost"
+      ? ["Date", "Cost", "Tokens", "Models"]
+      : ["Date", "Tokens", "Cost", "Models"];
 
   return (
     <div className="single-column">
@@ -549,6 +634,7 @@ function DailyView({
           onMode={onPeriodMode}
           onCustomRange={onCustomRange}
         />
+        <TrendMetricControls metric={trendMetric} onMetric={onTrendMetric} />
         <ModelFilterControls
           displayMode={displayMode}
           selectedTargets={selectedTargets}
@@ -556,26 +642,58 @@ function DailyView({
           onDisplayMode={onDisplayMode}
           onSelectedTargets={onSelectedTargets}
         />
-        {trend.hasData ? <DailyChart data={trendRows} series={trend.series} tall /> : <EmptyState text="No usage rows available for this period." />}
+        {trend.hasData ? (
+          <DailyChart data={trendRows} series={trend.series} metric={trendMetric} tall />
+        ) : (
+          <EmptyState text="No usage rows available for this period." />
+        )}
       </section>
       {showHourlyRows ? (
         <DataTable
-          columns={["Hour", "Tokens", "Cost", "Sessions"]}
+          columns={trendColumns}
           rows={trendRows
             .filter((row) => row.totalTokens > 0)
             .slice()
             .reverse()
-            .map((row) => [row.date, formatNumber(row.totalTokens), formatMoney(row.costUSD), String(row.sessionCount ?? 0)])}
+            .map((row) =>
+              trendMetric === "cost"
+                ? [row.date, formatMoney(row.costUSD), formatNumber(row.totalTokens), String(row.sessionCount ?? 0)]
+                : [row.date, formatNumber(row.totalTokens), formatMoney(row.costUSD), String(row.sessionCount ?? 0)]
+            )}
         />
       ) : (
         <DataTable
-          columns={["Date", "Tokens", "Cost", "Models"]}
+          columns={trendColumns}
           rows={trendRows
             .slice()
             .reverse()
-            .map((row) => [row.date, formatNumber(row.totalTokens), formatMoney(row.costUSD), row.models.map(compactModelName).join(", ")])}
+            .map((row) =>
+              trendMetric === "cost"
+                ? [row.date, formatMoney(row.costUSD), formatNumber(row.totalTokens), row.models.map(compactModelName).join(", ")]
+                : [row.date, formatNumber(row.totalTokens), formatMoney(row.costUSD), row.models.map(compactModelName).join(", ")]
+            )}
         />
       )}
+    </div>
+  );
+}
+
+function TrendMetricControls({ metric, onMetric }: { metric: TrendMetric; onMetric: (metric: TrendMetric) => void }) {
+  return (
+    <div className="trend-metric-controls">
+      <div className="segmented-control metric-toggle" role="group" aria-label="Trend metric">
+        {trendMetricOptions.map((option) => (
+          <button
+            type="button"
+            className={metric === option.metric ? "period-button active" : "period-button"}
+            aria-pressed={metric === option.metric}
+            key={option.metric}
+            onClick={() => onMetric(option.metric)}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
@@ -1173,14 +1291,23 @@ function TrayPanel({
 }) {
   return (
     <main className="tray-panel-shell">
-      <header className="tray-panel-header">
-        <div>
+      <header className="tray-panel-header" data-tauri-drag-region>
+        <div data-tauri-drag-region>
           <strong>Usage Deck</strong>
           <span>{sourceLabel(usage.collection.effectiveSourceMode)}</span>
         </div>
-        <button className="icon-command compact" onClick={onRefresh} disabled={loading} aria-label="Refresh usage">
-          <RefreshCw className={loading ? "spin" : ""} />
-        </button>
+        <div className="tray-panel-actions">
+          <button className="icon-command compact" onClick={onRefresh} disabled={loading} aria-label="Refresh usage">
+            <RefreshCw className={loading ? "spin" : ""} />
+          </button>
+          <button
+            className="icon-command compact"
+            onClick={() => void invoke("hide_tray_panel").catch(() => undefined)}
+            aria-label="Close quick panel"
+          >
+            <X />
+          </button>
+        </div>
       </header>
 
       <section className="tray-panel-bars">
@@ -1254,9 +1381,30 @@ function PanelTitle({ icon: Icon, title, meta }: { icon: typeof Activity; title:
   );
 }
 
-function DailyChart({ data, series, tall = false }: { data: UsageTrendPoint[]; series: TrendSeries[]; tall?: boolean }) {
+function trendMetricDataKey(metric: TrendMetric): "totalTokens" | "costUSD" {
+  return metric === "cost" ? "costUSD" : "totalTokens";
+}
+
+function trendMetricValue(row: { totalTokens: number; costUSD: number }, metric: TrendMetric): number {
+  return metric === "cost" ? row.costUSD : row.totalTokens;
+}
+
+function DailyChart({
+  data,
+  series,
+  metric,
+  tall = false
+}: {
+  data: UsageTrendPoint[];
+  series: TrendSeries[];
+  metric: TrendMetric;
+  tall?: boolean;
+}) {
   const height = tall ? 320 : 260;
-  const totalSeries = series.length <= 1 && series[0]?.key === "totalTokens";
+  const dataKey = trendMetricDataKey(metric);
+  const totalSeries = series.length <= 1 && series[0]?.key === dataKey;
+  const chartColor = metric === "cost" ? "var(--amber)" : "var(--ledger)";
+  const fillId = metric === "cost" ? "costFill" : "tokenFill";
 
   if (!totalSeries) {
     return (
@@ -1264,8 +1412,8 @@ function DailyChart({ data, series, tall = false }: { data: UsageTrendPoint[]; s
         <LineChart data={data}>
           <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
           <XAxis dataKey="date" tick={{ fill: "var(--muted)", fontSize: 12 }} axisLine={false} tickLine={false} minTickGap={18} />
-          <YAxis tick={{ fill: "var(--muted)", fontSize: 12 }} axisLine={false} tickLine={false} tickFormatter={shortNumber} />
-          <Tooltip contentStyle={tooltipStyle} formatter={(value, name) => [formatNumber(Number(value)), name]} />
+          <YAxis tick={{ fill: "var(--muted)", fontSize: 12 }} axisLine={false} tickLine={false} tickFormatter={(value) => shortTrendValue(metric, Number(value))} />
+          <Tooltip contentStyle={tooltipStyle} formatter={(value, name) => [formatTrendValue(metric, Number(value)), name]} />
           <Legend wrapperStyle={{ color: "var(--muted)", fontSize: 12 }} />
           {series.map((item) => (
             <Line
@@ -1288,22 +1436,22 @@ function DailyChart({ data, series, tall = false }: { data: UsageTrendPoint[]; s
     <ResponsiveContainer width="100%" height={height}>
       <AreaChart data={data}>
         <defs>
-          <linearGradient id="tokenFill" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="5%" stopColor="var(--ledger)" stopOpacity={0.55} />
-            <stop offset="95%" stopColor="var(--ledger)" stopOpacity={0.04} />
+          <linearGradient id={fillId} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="5%" stopColor={chartColor} stopOpacity={0.55} />
+            <stop offset="95%" stopColor={chartColor} stopOpacity={0.04} />
           </linearGradient>
         </defs>
         <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
         <XAxis dataKey="date" tick={{ fill: "var(--muted)", fontSize: 12 }} axisLine={false} tickLine={false} minTickGap={18} />
-        <YAxis tick={{ fill: "var(--muted)", fontSize: 12 }} axisLine={false} tickLine={false} tickFormatter={shortNumber} />
-        <Tooltip contentStyle={tooltipStyle} formatter={(value) => formatNumber(Number(value))} />
+        <YAxis tick={{ fill: "var(--muted)", fontSize: 12 }} axisLine={false} tickLine={false} tickFormatter={(value) => shortTrendValue(metric, Number(value))} />
+        <Tooltip contentStyle={tooltipStyle} formatter={(value) => formatTrendValue(metric, Number(value))} />
         <Area
           type="monotone"
-          dataKey="totalTokens"
-          stroke="var(--ledger)"
-          fill="url(#tokenFill)"
+          dataKey={dataKey}
+          stroke={chartColor}
+          fill={`url(#${fillId})`}
           strokeWidth={2}
-          dot={{ r: 3, fill: "var(--ledger)" }}
+          dot={{ r: 3, fill: chartColor }}
           activeDot={{ r: 4 }}
         />
       </AreaChart>
@@ -1317,16 +1465,17 @@ function buildTrendRows(
   range: DateRange,
   displayMode: TrendDisplayMode,
   selectedTargets: TrendModelTarget[],
-  catalog: TrendModelFilterCatalog
+  catalog: TrendModelFilterCatalog,
+  metric: TrendMetric
 ): TrendResult {
   const buckets = buildTrendBuckets(usage, mode, range);
-  const series = buildTrendSeries(displayMode, selectedTargets, catalog);
-  const rows = buckets.map((bucket) => buildTrendPoint(bucket, displayMode, selectedTargets, series));
+  const series = buildTrendSeries(displayMode, selectedTargets, catalog, metric);
+  const rows = buckets.map((bucket) => buildTrendPoint(bucket, displayMode, selectedTargets, series, metric));
 
   return {
     rows,
     series,
-    hasData: series.length > 0 && rows.some((row) => row.totalTokens > 0)
+    hasData: series.length > 0 && rows.some((row) => trendMetricValue(row, metric) > 0)
   };
 }
 
@@ -1407,7 +1556,8 @@ function buildTrendPoint(
   bucket: TrendBucket,
   displayMode: TrendDisplayMode,
   selectedTargets: TrendModelTarget[],
-  series: TrendSeries[]
+  series: TrendSeries[],
+  metric: TrendMetric
 ): UsageTrendPoint {
   const point: UsageTrendPoint = {
     date: bucket.date,
@@ -1432,23 +1582,24 @@ function buildTrendPoint(
       point.totalTokens += breakdown.totalTokens;
       point.costUSD += breakdown.costUSD;
       modelSet.add(breakdown.model);
+      const trendValue = trendMetricValue(breakdown, metric);
 
       if (displayMode === "model") {
         const modelSeries = seriesLookup.get(breakdown.model);
         if (modelSeries) {
-          point[modelSeries.key] = Number(point[modelSeries.key] ?? 0) + breakdown.totalTokens;
+          point[modelSeries.key] = Number(point[modelSeries.key] ?? 0) + trendValue;
         }
       } else if (displayMode === "family") {
         const familySeries = seriesLookup.get(familyTargetForModel(breakdown.model));
         if (familySeries) {
-          point[familySeries.key] = Number(point[familySeries.key] ?? 0) + breakdown.totalTokens;
+          point[familySeries.key] = Number(point[familySeries.key] ?? 0) + trendValue;
         }
       }
     }
   }
 
   if (displayMode === "total" && series[0]) {
-    point[series[0].key] = point.totalTokens;
+    point[series[0].key] = trendMetricValue(point, metric);
   }
 
   point.models = [...modelSet];
@@ -1506,14 +1657,22 @@ function buildTrendModelFilterCatalog(usage: NormalizedUsage): TrendModelFilterC
 function buildTrendSeries(
   displayMode: TrendDisplayMode,
   selectedTargets: TrendModelTarget[],
-  catalog: TrendModelFilterCatalog
+  catalog: TrendModelFilterCatalog,
+  metric: TrendMetric
 ): TrendSeries[] {
   if (selectedTargets.length === 0) {
     return [];
   }
 
   if (displayMode === "total") {
-    return [{ key: "totalTokens", label: "Total", color: "var(--ledger)", target: "all" }];
+    return [
+      {
+        key: trendMetricDataKey(metric),
+        label: metric === "cost" ? "Total cost" : "Total tokens",
+        color: metric === "cost" ? "var(--amber)" : "var(--ledger)",
+        target: "all"
+      }
+    ];
   }
 
   if (displayMode === "model") {
@@ -2072,6 +2231,60 @@ function loadTheme(): AppTheme {
   return theme === "dark" || theme === "light" || theme === "system" ? theme : "system";
 }
 
+function loadTrendPreferences(): TrendPreferences {
+  if (typeof window === "undefined") {
+    return DEFAULT_TREND_PREFERENCES;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(TREND_PREFERENCES_STORAGE_KEY);
+    if (!raw) {
+      return DEFAULT_TREND_PREFERENCES;
+    }
+    return normalizeTrendPreferences(JSON.parse(raw));
+  } catch {
+    return DEFAULT_TREND_PREFERENCES;
+  }
+}
+
+function saveTrendPreferences(preferences: TrendPreferences) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(TREND_PREFERENCES_STORAGE_KEY, JSON.stringify(normalizeTrendPreferences(preferences)));
+  } catch {
+    // Local persistence is a convenience layer; the dashboard should continue without it.
+  }
+}
+
+function normalizeTrendPreferences(input: unknown): TrendPreferences {
+  const record = input && typeof input === "object" ? (input as Partial<TrendPreferences>) : {};
+  const displayMode = isTrendDisplayMode(record.displayMode) ? record.displayMode : DEFAULT_TREND_PREFERENCES.displayMode;
+  const selectedTargets = Array.isArray(record.selectedTargets)
+    ? record.selectedTargets.filter((target): target is TrendModelTarget => typeof target === "string" && target.trim().length > 0)
+    : DEFAULT_TREND_PREFERENCES.selectedTargets;
+
+  return {
+    metric: isTrendMetric(record.metric) ? record.metric : DEFAULT_TREND_PREFERENCES.metric,
+    displayMode,
+    selectedTargets: displayMode === "total" ? ["all"] : selectedTargets
+  };
+}
+
+function isTrendMetric(value: unknown): value is TrendMetric {
+  return value === "tokens" || value === "cost";
+}
+
+function isTrendDisplayMode(value: unknown): value is TrendDisplayMode {
+  return value === "total" || value === "model" || value === "family";
+}
+
+function sameTraySettings(left: TrayIndicatorSettings, right: TrayIndicatorSettings): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
 function resolveSystemTheme(): ResolvedAppTheme {
   if (typeof window === "undefined" || !window.matchMedia) {
     return "dark";
@@ -2102,8 +2315,29 @@ function shortNumber(value: number): string {
   return String(value);
 }
 
+function shortMoney(value: number): string {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    notation: "compact",
+    maximumFractionDigits: 1
+  }).format(value);
+}
+
 function formatMoney(value: number): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(value);
+}
+
+function formatTrendMetricLabel(metric: TrendMetric): string {
+  return metric === "cost" ? "Cost" : "Token";
+}
+
+function formatTrendValue(metric: TrendMetric, value: number): string {
+  return metric === "cost" ? formatMoney(value) : formatNumber(value);
+}
+
+function shortTrendValue(metric: TrendMetric, value: number): string {
+  return metric === "cost" ? shortMoney(value) : shortNumber(value);
 }
 
 function formatTrayUsed(bar: TrayIndicatorBar): string {

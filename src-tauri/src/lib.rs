@@ -1,11 +1,16 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
 use tauri::path::BaseDirectory;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{image::Image, menu::MenuBuilder, AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{
+    image::Image, menu::MenuBuilder, AppHandle, Emitter, Manager, PhysicalPosition, WebviewUrl,
+    WebviewWindow, WebviewWindowBuilder,
+};
 use tauri_plugin_shell::ShellExt;
 
 const COMMANDS: [&str; 4] = ["daily", "monthly", "session", "blocks"];
@@ -13,6 +18,9 @@ const SIDECAR_NAME: &str = "ccusage-runner";
 const TRAY_ID: &str = "usage-deck-tray";
 const TRAY_PANEL_LABEL: &str = "tray-panel";
 const TRAY_SETTINGS_FILE: &str = "tray-indicator-settings.json";
+const TRAY_SETTINGS_CHANGED_EVENT: &str = "tray-settings-changed";
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -167,6 +175,8 @@ fn save_tray_settings(app: AppHandle, settings: Value) -> Result<(), String> {
     let temporary_path = path.with_file_name(format!("{TRAY_SETTINGS_FILE}.tmp"));
     fs::write(&temporary_path, raw).map_err(|error| format!("Failed to write tray settings: {error}"))?;
     fs::rename(&temporary_path, &path).map_err(|error| format!("Failed to store tray settings: {error}"))?;
+    app.emit(TRAY_SETTINGS_CHANGED_EVENT, settings)
+        .map_err(|error| format!("Failed to notify tray settings change: {error}"))?;
     Ok(())
 }
 
@@ -194,6 +204,15 @@ async fn show_dashboard(app: AppHandle) -> Result<(), String> {
 
     if let Some(panel) = app.get_webview_window(TRAY_PANEL_LABEL) {
         let _ = panel.hide();
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn hide_tray_panel(app: AppHandle) -> Result<(), String> {
+    if let Some(panel) = app.get_webview_window(TRAY_PANEL_LABEL) {
+        panel.hide().map_err(|error| error.to_string())?;
     }
 
     Ok(())
@@ -405,6 +424,8 @@ async fn run_process(app: &AppHandle, runner: &Runner, args: &[String]) -> Resul
                 .args(args)
                 .env("FORCE_COLOR", "0")
                 .env("NO_COLOR", "1");
+            #[cfg(target_os = "windows")]
+            command.creation_flags(CREATE_NO_WINDOW);
 
             let output = command
                 .output()
@@ -450,14 +471,26 @@ pub fn run() {
             update_tray_indicator,
             load_tray_settings,
             save_tray_settings,
-            show_dashboard
+            show_dashboard,
+            hide_tray_panel
         ])
         .run(tauri::generate_context!())
         .expect("error while running Usage Deck");
 }
 
 fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
+    if stored_tray_enabled(app) == Some(false) {
+        return Ok(());
+    }
+
     setup_tray_icon(app, &default_tray_summary())
+}
+
+fn stored_tray_enabled(app: &tauri::App) -> Option<bool> {
+    let path = tray_settings_path(app.handle()).ok()?;
+    let raw = fs::read_to_string(path).ok()?;
+    let settings = serde_json::from_str::<Value>(&raw).ok()?;
+    settings.get("enabled").and_then(Value::as_bool)
 }
 
 fn setup_tray_icon<M: Manager<tauri::Wry>>(manager: &M, summary: &TrayIndicatorSummary) -> tauri::Result<()> {
@@ -514,7 +547,7 @@ fn toggle_tray_panel(app: &AppHandle) -> tauri::Result<()> {
         return Ok(());
     }
 
-    WebviewWindowBuilder::new(
+    let panel = WebviewWindowBuilder::new(
         app,
         TRAY_PANEL_LABEL,
         WebviewUrl::App("index.html?panel=tray".into()),
@@ -527,8 +560,27 @@ fn toggle_tray_panel(app: &AppHandle) -> tauri::Result<()> {
     .always_on_top(true)
     .skip_taskbar(true)
     .focused(true)
+    .visible(false)
     .build()?;
 
+    position_tray_panel(&panel)?;
+    panel.show()?;
+    panel.set_focus()?;
+
+    Ok(())
+}
+
+fn position_tray_panel(panel: &WebviewWindow) -> tauri::Result<()> {
+    let Some(monitor) = panel.current_monitor()?.or(panel.primary_monitor()?) else {
+        return Ok(());
+    };
+    let work_area = monitor.work_area();
+    let panel_size = panel.outer_size()?;
+    let margin = (18.0 * monitor.scale_factor()).round() as i32;
+    let x = work_area.position.x + work_area.size.width as i32 - panel_size.width as i32 - margin;
+    let y = work_area.position.y + work_area.size.height as i32 - panel_size.height as i32 - margin;
+
+    panel.set_position(PhysicalPosition::new(x.max(work_area.position.x), y.max(work_area.position.y)))?;
     Ok(())
 }
 

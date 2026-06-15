@@ -467,6 +467,12 @@ td:nth-child(3),
   gap: 10px;
 }
 
+.trend-metric-controls {
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+}
+
 .period-control-row {
   display: flex;
   align-items: center;
@@ -1117,6 +1123,11 @@ td:first-child {
   gap: 10px;
 }
 
+.tray-panel-header {
+  cursor: move;
+  user-select: none;
+}
+
 .tray-panel-header > div {
   min-width: 0;
   display: grid;
@@ -1126,6 +1137,12 @@ td:first-child {
 .tray-panel-header span {
   color: var(--muted);
   font-size: 12px;
+}
+
+.tray-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .icon-command.compact {
