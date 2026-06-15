@@ -396,9 +396,17 @@ fn find_packaged_sidecar_runner(app: &AppHandle) -> Option<PathBuf> {
         }
     }
 
+    if let Ok(appdir) = std::env::var("APPDIR") {
+        let appdir = PathBuf::from(appdir);
+        candidates.push(appdir.join("usr/bin").join(SIDECAR_NAME));
+    }
+
     if let Ok(resource_dir) = app.path().resolve("", BaseDirectory::Resource) {
         candidates.push(resource_dir.join(SIDECAR_NAME));
         candidates.push(resource_dir.join("_up_").join(SIDECAR_NAME));
+        if let Some(usr_dir) = resource_dir.parent().and_then(|lib_dir| lib_dir.parent()) {
+            candidates.push(usr_dir.join("bin").join(SIDECAR_NAME));
+        }
     }
 
     #[cfg(target_os = "linux")]
