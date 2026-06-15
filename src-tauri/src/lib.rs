@@ -84,12 +84,14 @@ struct Runner {
 #[derive(Debug)]
 struct TrayRuntimeState {
     enabled: Mutex<bool>,
+    tooltip: Mutex<Option<String>>,
 }
 
 impl TrayRuntimeState {
     fn new(enabled: bool) -> Self {
         Self {
             enabled: Mutex::new(enabled),
+            tooltip: Mutex::new(None),
         }
     }
 
@@ -101,6 +103,20 @@ impl TrayRuntimeState {
 
     fn is_enabled(&self) -> bool {
         self.enabled.lock().map(|current| *current).unwrap_or(true)
+    }
+
+    fn set_tooltip(&self, tooltip: String) {
+        if let Ok(mut current) = self.tooltip.lock() {
+            *current = Some(tooltip);
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    fn tooltip_changed(&self, tooltip: &str) -> bool {
+        self.tooltip
+            .lock()
+            .map(|current| current.as_deref() != Some(tooltip))
+            .unwrap_or(true)
     }
 }
 
@@ -162,15 +178,29 @@ async fn update_tray_indicator(app: AppHandle, summary: TrayIndicatorSummary) ->
     }
 
     if app.tray_by_id(TRAY_ID).is_none() {
+        let tooltip = tray_tooltip(&summary);
         setup_tray_icon(&app, &summary).map_err(|error| format!("Failed to create tray icon: {error}"))?;
+        set_tray_runtime_tooltip(&app, tooltip);
+        return Ok(());
+    }
+
+    let tooltip = tray_tooltip(&summary);
+
+    #[cfg(target_os = "windows")]
+    if tray_runtime_tooltip_changed(&app, &tooltip) {
+        remove_tray_icon(&app)?;
+        setup_tray_icon(&app, &summary).map_err(|error| format!("Failed to refresh tray icon: {error}"))?;
+        set_tray_runtime_tooltip(&app, tooltip);
+        return Ok(());
     }
 
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
         let icon = render_tray_icon(&summary);
         tray.set_icon(Some(icon))
             .map_err(|error| format!("Failed to update tray icon: {error}"))?;
-        tray.set_tooltip(Some(tray_tooltip(&summary)))
+        tray.set_tooltip(Some(tooltip.as_str()))
             .map_err(|error| format!("Failed to update tray tooltip: {error}"))?;
+        set_tray_runtime_tooltip(&app, tooltip);
     }
 
     Ok(())
@@ -194,8 +224,10 @@ fn save_tray_settings(app: AppHandle, settings: Value) -> Result<(), String> {
         set_tray_runtime_enabled(&app, enabled);
         if enabled {
             if app.tray_by_id(TRAY_ID).is_none() {
-                setup_tray_icon(&app, &default_tray_summary())
-                    .map_err(|error| format!("Failed to create tray icon: {error}"))?;
+                let summary = default_tray_summary();
+                let tooltip = tray_tooltip(&summary);
+                setup_tray_icon(&app, &summary).map_err(|error| format!("Failed to create tray icon: {error}"))?;
+                set_tray_runtime_tooltip(&app, tooltip);
             }
         } else {
             close_tray_panel(&app);
@@ -596,6 +628,19 @@ fn set_tray_runtime_enabled(app: &AppHandle, enabled: bool) {
     if let Some(state) = app.try_state::<TrayRuntimeState>() {
         state.set_enabled(enabled);
     }
+}
+
+fn set_tray_runtime_tooltip(app: &AppHandle, tooltip: String) {
+    if let Some(state) = app.try_state::<TrayRuntimeState>() {
+        state.set_tooltip(tooltip);
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn tray_runtime_tooltip_changed(app: &AppHandle, tooltip: &str) -> bool {
+    app.try_state::<TrayRuntimeState>()
+        .map(|state| state.tooltip_changed(tooltip))
+        .unwrap_or(true)
 }
 
 fn setup_tray_icon<M: Manager<tauri::Wry>>(manager: &M, summary: &TrayIndicatorSummary) -> tauri::Result<()> {

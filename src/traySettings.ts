@@ -353,21 +353,29 @@ function buildTooltip(bars: TrayIndicatorBar[]): string {
     return "Usage Deck: no tray bars enabled";
   }
 
-  return [
-    "Usage Deck",
-    ...bars.map(
-      (bar) =>
-        `${bar.label} ${bar.period}: ${shortBudgetValue(bar.usedValue, bar.budgetType)} / ${
-          bar.budgetSource === "configured" && bar.budgetValue > 0
-            ? shortBudgetValue(bar.budgetValue, bar.budgetType)
-            : relativeBudgetLabel(bar.budgetType)
-        }`
-    )
-  ].join("\n");
+  return ["Usage Deck", ...bars.map((bar) => `${bar.label} ${periodTooltipLabel(bar.period)}: ${budgetPairLabel(bar)}`)].join(" | ");
 }
 
 function budgetValueForType(usage: Pick<ModelUsage, "totalTokens" | "costUSD">, type: TrayBudgetType): number {
   return type === "cost" ? usage.costUSD : usage.totalTokens;
+}
+
+function periodTooltipLabel(period: TrayBudgetPeriod): string {
+  return period === "week" ? "weekly" : "monthly";
+}
+
+function budgetPairLabel(bar: TrayIndicatorBar): string {
+  const budget =
+    bar.budgetSource === "configured" && bar.budgetValue > 0
+      ? shortBudgetValueForPair(bar.budgetValue, bar.budgetType)
+      : relativeBudgetLabel(bar.budgetType);
+  const used = shortBudgetValueForPair(bar.usedValue, bar.budgetType);
+  const suffix = bar.budgetType === "tokens" && !budget.includes("tokens") ? " tokens" : "";
+  return `${used}/${budget}${suffix}`;
+}
+
+function shortBudgetValueForPair(value: number, type: TrayBudgetType): string {
+  return type === "cost" ? shortMoney(value) : shortNumber(value);
 }
 
 function parseDateKey(value: string): Date | null {
