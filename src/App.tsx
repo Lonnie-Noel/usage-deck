@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type PointerEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   Activity,
   AlertTriangle,
@@ -108,6 +109,7 @@ type TrendPreferences = {
   selectedTargets: TrendModelTarget[];
   periodMode: PeriodMode;
   customRange: DateRange;
+  budgets: TrendBudgetMap;
 };
 
 type OverviewUsageScope = {
@@ -128,6 +130,24 @@ type ModelFilterOption = {
   label: string;
   detected: boolean;
   totalTokens: number;
+};
+
+type TrendBudgetSetting = {
+  budgetType: TrendMetric;
+  budgetValue: number;
+};
+
+type TrendBudgetMap = Record<string, TrendBudgetSetting>;
+
+type OverviewBudgetLine = {
+  target: TrendModelTarget;
+  label: string;
+  summary: UsageSummary;
+  budgetType: TrendMetric;
+  budgetValue: number;
+  usedValue: number;
+  ratio: number;
+  color: string;
 };
 
 type TrendUsageRow =
@@ -197,7 +217,8 @@ const DEFAULT_TREND_PREFERENCES: TrendPreferences = {
   displayMode: "family",
   selectedTargets: ["family:gpt", "family:claude", "family:gemini"],
   periodMode: "month",
-  customRange: getPresetRange("month")
+  customRange: getPresetRange("month"),
+  budgets: {}
 };
 
 export function App() {
@@ -225,6 +246,7 @@ export function App() {
   const selectedTrendTargets = trendPreferences.selectedTargets;
   const dailyPeriodMode = trendPreferences.periodMode;
   const customDateRange = trendPreferences.customRange;
+  const trendBudgets = trendPreferences.budgets;
   const setTrendMetric = useCallback(
     (metric: TrendMetric) => setTrendPreferences((current) => ({ ...current, metric })),
     []
@@ -243,6 +265,17 @@ export function App() {
   );
   const setCustomDateRange = useCallback(
     (customRange: DateRange) => setTrendPreferences((current) => ({ ...current, customRange })),
+    []
+  );
+  const setTrendBudget = useCallback(
+    (target: TrendModelTarget, patch: Partial<TrendBudgetSetting>) =>
+      setTrendPreferences((current) => ({
+        ...current,
+        budgets: {
+          ...current.budgets,
+          [target]: normalizeTrendBudgetSetting({ ...trendBudgetForTarget(current.budgets, target), ...patch })
+        }
+      })),
     []
   );
 
@@ -457,6 +490,8 @@ export function App() {
               trendMode={dailyPeriodMode}
               trendRange={activeDailyRange}
               selectedTargets={selectedTrendTargets}
+              modelCatalog={trendModelCatalog}
+              budgets={trendBudgets}
             />
           ) : null}
           {activeView === "daily" ? (
@@ -469,12 +504,14 @@ export function App() {
               trendMetric={trendMetric}
               displayMode={trendDisplayMode}
               selectedTargets={selectedTrendTargets}
+              budgets={trendBudgets}
               modelCatalog={trendModelCatalog}
               onPeriodMode={setDailyPeriodMode}
               onCustomRange={setCustomDateRange}
               onTrendMetric={setTrendMetric}
               onDisplayMode={setTrendDisplayMode}
               onSelectedTargets={setSelectedTrendTargets}
+              onBudgetChange={setTrendBudget}
             />
           ) : null}
           {activeView === "monthly" ? <MonthlyView usage={usage} selectedTargets={selectedTrendTargets} /> : null}
@@ -507,7 +544,9 @@ function Overview({
   trendMetric,
   trendMode,
   trendRange,
-  selectedTargets
+  selectedTargets,
+  modelCatalog,
+  budgets
 }: {
   usage: NormalizedUsage;
   trend: TrendResult;
@@ -515,36 +554,38 @@ function Overview({
   trendMode: PeriodMode;
   trendRange: DateRange;
   selectedTargets: TrendModelTarget[];
+  modelCatalog: TrendModelFilterCatalog;
+  budgets: TrendBudgetMap;
 }) {
   const todayRange = getDayRange();
   const weekRange = getWeekRange();
   const monthRange = getMonthRange();
   const overviewScope = buildOverviewUsageScope(usage, selectedTargets);
-  const todaySummary = summarizeSelectedUsage(filterUsageByRange(usage.daily, todayRange), selectedTargets);
-  const weekSummary = summarizeSelectedUsage(filterUsageByRange(usage.daily, weekRange), selectedTargets);
-  const monthSummary = summarizeMonthUsage(usage, monthRange, selectedTargets);
+  const todayBudgetLines = buildOverviewBudgetLines(usage, todayRange, "day", selectedTargets, modelCatalog, budgets);
+  const weekBudgetLines = buildOverviewBudgetLines(usage, weekRange, "week", selectedTargets, modelCatalog, budgets);
+  const monthBudgetLines = buildOverviewBudgetLines(usage, monthRange, "month", selectedTargets, modelCatalog, budgets);
   const scopeMeta = selectedTargets.includes("all") ? "all models" : "selected models";
   const modelMixMeta = formatModelMixMeta(overviewScope.modelUsage.length, selectedTargets);
 
   return (
     <div className="overview-grid">
-      <MetricCard
+      <BudgetMetricCard
         icon={Activity}
         label="Today"
-        value={formatMoney(todaySummary.costUSD)}
-        detail={metricDetail(todaySummary, todayRange, "day")}
+        detail={formatPeriodMeta("day", todayRange)}
+        lines={todayBudgetLines}
       />
-      <MetricCard
+      <BudgetMetricCard
         icon={CalendarDays}
         label="Week"
-        value={formatMoney(weekSummary.costUSD)}
-        detail={metricDetail(weekSummary, weekRange, "week")}
+        detail={formatDateRangeWithoutYear(weekRange)}
+        lines={weekBudgetLines}
       />
-      <MetricCard
+      <BudgetMetricCard
         icon={BarChart3}
-        label="Month cost"
-        value={formatMoney(monthSummary.costUSD)}
-        detail={metricDetail(monthSummary, monthRange, "month")}
+        label="Month"
+        detail={formatPeriodMeta("month", monthRange)}
+        lines={monthBudgetLines}
       />
       <MetricCard
         icon={Zap}
@@ -608,12 +649,14 @@ function DailyView({
   trendMetric,
   displayMode,
   selectedTargets,
+  budgets,
   modelCatalog,
   onPeriodMode,
   onCustomRange,
   onTrendMetric,
   onDisplayMode,
-  onSelectedTargets
+  onSelectedTargets,
+  onBudgetChange
 }: {
   rows: NormalizedUsage["daily"];
   trend: TrendResult;
@@ -623,12 +666,14 @@ function DailyView({
   trendMetric: TrendMetric;
   displayMode: TrendDisplayMode;
   selectedTargets: TrendModelTarget[];
+  budgets: TrendBudgetMap;
   modelCatalog: TrendModelFilterCatalog;
   onPeriodMode: (mode: PeriodMode) => void;
   onCustomRange: (range: DateRange) => void;
   onTrendMetric: (metric: TrendMetric) => void;
   onDisplayMode: (mode: TrendDisplayMode) => void;
   onSelectedTargets: (targets: TrendModelTarget[]) => void;
+  onBudgetChange: (target: TrendModelTarget, patch: Partial<TrendBudgetSetting>) => void;
 }) {
   const showHourlyRows = isHourlyTrendMode(periodMode);
   const hourlyMeta = periodMode === "12hrs" ? "12 hours" : "24 hours";
@@ -656,9 +701,11 @@ function DailyView({
         <ModelFilterControls
           displayMode={displayMode}
           selectedTargets={selectedTargets}
+          budgets={budgets}
           catalog={modelCatalog}
           onDisplayMode={onDisplayMode}
           onSelectedTargets={onSelectedTargets}
+          onBudgetChange={onBudgetChange}
         />
         {trend.hasData ? (
           <DailyChart data={trendRows} series={trend.series} metric={trendMetric} tall />
@@ -779,18 +826,21 @@ function PeriodControls({
 function ModelFilterControls({
   displayMode,
   selectedTargets,
+  budgets,
   catalog,
   onDisplayMode,
-  onSelectedTargets
+  onSelectedTargets,
+  onBudgetChange
 }: {
   displayMode: TrendDisplayMode;
   selectedTargets: TrendModelTarget[];
+  budgets: TrendBudgetMap;
   catalog: TrendModelFilterCatalog;
   onDisplayMode: (mode: TrendDisplayMode) => void;
   onSelectedTargets: (targets: TrendModelTarget[]) => void;
+  onBudgetChange: (target: TrendModelTarget, patch: Partial<TrendBudgetSetting>) => void;
 }) {
   const [query, setQuery] = useState("");
-  const [expanded, setExpanded] = useState(false);
   const selectedSet = new Set(selectedTargets);
   const normalizedQuery = query.trim().toLowerCase();
   const visibleModels = catalog.modelOptions.filter((option) => !normalizedQuery || option.label.toLowerCase().includes(normalizedQuery));
@@ -805,6 +855,14 @@ function ModelFilterControls({
       : `${selectedTargets.length} selected`;
   const visibleOptions = displayMode === "family" ? catalog.familyOptions : visibleModels;
   const optionNoun = displayMode === "family" ? "families" : "models";
+  const allDetectedOptions =
+    displayMode === "family" ? catalog.familyOptions : catalog.modelOptions.filter((option) => option.detected);
+  const allDetectedOption: ModelFilterOption = {
+    value: "all",
+    label: `All detected ${optionNoun}`,
+    detected: allDetectedOptions.some((option) => option.detected),
+    totalTokens: allDetectedOptions.reduce((total, option) => total + option.totalTokens, 0)
+  };
 
   const toggleTarget = (target: TrendModelTarget) => {
     if (target === "all") {
@@ -843,88 +901,87 @@ function ModelFilterControls({
 
   return (
     <div className="model-filter-shell">
-      <button
-        aria-expanded={expanded}
-        className="model-filter-summary"
-        onClick={() => setExpanded((value) => !value)}
-        type="button"
-      >
+      <div className="model-filter-summary">
         <span>Scope: {selectedLabel}</span>
         <strong>{trendDisplayOptions.find((option) => option.mode === displayMode)?.label ?? "Total"}</strong>
-      </button>
+      </div>
 
-      {expanded ? (
-        <div className="model-filter-panel">
+      <div className="model-filter-panel">
         <div className="model-filter-topline">
-        <div className="mode-switch" role="group" aria-label="Trend display mode">
-          {trendDisplayOptions.map((option) => (
-            <button
-              className={displayMode === option.mode ? "period-button active" : "period-button"}
-              aria-pressed={displayMode === option.mode}
-              key={option.mode}
-              onClick={() => changeDisplayMode(option.mode)}
-              type="button"
-            >
-              {option.label}
-            </button>
-          ))}
+          <div className="mode-switch" role="group" aria-label="Trend display mode">
+            {trendDisplayOptions.map((option) => (
+              <button
+                className={displayMode === option.mode ? "period-button active" : "period-button"}
+                aria-pressed={displayMode === option.mode}
+                key={option.mode}
+                onClick={() => changeDisplayMode(option.mode)}
+                type="button"
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          <span className="model-filter-count">{selectedLabel}</span>
         </div>
-        <span className="model-filter-count">{selectedLabel}</span>
-      </div>
 
-      {displayMode !== "total" ? (
         <div className="model-filter-actions">
-        {displayMode === "model" ? (
-          <input
-            aria-label="Filter models"
-            placeholder="Filter models"
-            type="search"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-          />
-        ) : null}
-        <button className="secondary-command" type="button" onClick={selectDetected}>
-          All detected {optionNoun}
-        </button>
-        <button className="secondary-command" type="button" onClick={() => onSelectedTargets([])}>
-          Clear
-        </button>
-        <button
-          className="secondary-command"
-          type="button"
-          onClick={() => {
-            onDisplayMode("total");
-            onSelectedTargets(["all"]);
-          }}
-        >
-          Total only
-        </button>
-      </div>
-      ) : null}
-
-      {displayMode !== "total" ? (
-        <div className={displayMode === "family" ? "model-filter-grid" : "model-filter-models"}>
-          <label className={selectedSet.has("all") ? "model-filter-option active" : "model-filter-option"}>
-            <input type="checkbox" checked={selectedSet.has("all")} onChange={() => toggleTarget("all")} />
-            <span>
-              <strong>All detected {optionNoun}</strong>
-              <small>Breakdown source</small>
-            </span>
-          </label>
-
-          {visibleOptions.map((option) => (
-            <ModelFilterOptionControl
-              checked={selectedSet.has(option.value)}
-              key={option.value}
-              option={option}
-              onToggle={() => toggleTarget(option.value)}
+          {displayMode === "model" ? (
+            <input
+              aria-label="Filter models"
+              placeholder="Filter models"
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
             />
-          ))}
-          {visibleOptions.length === 0 ? <span className="model-filter-empty">No matching models.</span> : null}
+          ) : null}
+          {displayMode !== "total" ? (
+            <>
+              <button className="secondary-command" type="button" onClick={selectDetected}>
+                All detected {optionNoun}
+              </button>
+              <button className="secondary-command" type="button" onClick={() => onSelectedTargets([])}>
+                Clear
+              </button>
+            </>
+          ) : null}
+          <button
+            className="secondary-command"
+            type="button"
+            onClick={() => {
+              onDisplayMode("total");
+              onSelectedTargets(["all"]);
+            }}
+          >
+            Total only
+          </button>
         </div>
-      ) : null}
+
+        <div className={displayMode === "model" ? "model-filter-models" : "model-filter-grid"}>
+          <ModelFilterOptionControl
+            checked={selectedSet.has("all")}
+            option={allDetectedOption}
+            budget={trendBudgetForTarget(budgets, "all")}
+            onBudgetChange={(patch) => onBudgetChange("all", patch)}
+            onToggle={() => toggleTarget("all")}
+          />
+
+          {displayMode !== "total" ? (
+            <>
+              {visibleOptions.map((option) => (
+                <ModelFilterOptionControl
+                  checked={selectedSet.has(option.value)}
+                  key={option.value}
+                  option={option}
+                  budget={trendBudgetForTarget(budgets, option.value)}
+                  onBudgetChange={(patch) => onBudgetChange(option.value, patch)}
+                  onToggle={() => toggleTarget(option.value)}
+                />
+              ))}
+              {visibleOptions.length === 0 ? <span className="model-filter-empty">No matching models.</span> : null}
+            </>
+          ) : null}
         </div>
-      ) : null}
+      </div>
     </div>
   );
 }
@@ -932,21 +989,44 @@ function ModelFilterControls({
 function ModelFilterOptionControl({
   option,
   checked,
-  onToggle
+  budget,
+  onToggle,
+  onBudgetChange
 }: {
   option: ModelFilterOption;
   checked: boolean;
+  budget: TrendBudgetSetting;
   onToggle: () => void;
+  onBudgetChange: (patch: Partial<TrendBudgetSetting>) => void;
 }) {
   return (
-    <label className={checked ? "model-filter-option active" : "model-filter-option"}>
+    <div className={checked ? "model-filter-option active" : "model-filter-option"}>
       <input type="checkbox" checked={checked} onChange={onToggle} />
-      <span>
+      <span className="model-filter-copy">
         <strong>{option.label}</strong>
-        <small>{option.detected ? `${shortNumber(option.totalTokens)} tokens detected` : "available"}</small>
+        <small>{option.detected ? `detected · ${shortNumber(option.totalTokens)} tokens` : "available"}</small>
       </span>
-      {option.detected ? <em>detected</em> : null}
-    </label>
+      <div className="model-budget-controls">
+        <label>
+          <span>Type</span>
+          <select value={budget.budgetType} onChange={(event) => onBudgetChange({ budgetType: event.target.value as TrendMetric })}>
+            <option value="cost">Cost</option>
+            <option value="tokens">Tokens</option>
+          </select>
+        </label>
+        <label>
+          <span>Budget</span>
+          <input
+            type="number"
+            min="0"
+            step={budget.budgetType === "cost" ? "1" : "1000"}
+            value={budget.budgetValue || ""}
+            placeholder="No budget"
+            onChange={(event) => onBudgetChange({ budgetValue: Number(event.target.value) })}
+          />
+        </label>
+      </div>
+    </div>
   );
 }
 
@@ -1307,9 +1387,19 @@ function TrayPanel({
   loading: boolean;
   onRefresh: () => void;
 }) {
+  const startDrag = (event: PointerEvent<HTMLElement>) => {
+    if (event.button !== 0 || !window.__TAURI_INTERNALS__) {
+      return;
+    }
+    if ((event.target as HTMLElement).closest("button, a, input, select, textarea")) {
+      return;
+    }
+    void getCurrentWindow().startDragging().catch(() => undefined);
+  };
+
   return (
     <main className="tray-panel-shell">
-      <header className="tray-panel-header">
+      <header className="tray-panel-header" onPointerDown={startDrag}>
         <div>
           <strong>Usage Deck</strong>
           <span>{sourceLabel(usage.collection.effectiveSourceMode)}</span>
@@ -1383,6 +1473,51 @@ function MetricCard({
       <span>{label}</span>
       <strong>{value}</strong>
       <small>{detail}</small>
+    </section>
+  );
+}
+
+function BudgetMetricCard({
+  icon: Icon,
+  label,
+  detail,
+  lines
+}: {
+  icon: typeof Activity;
+  label: string;
+  detail: string;
+  lines: OverviewBudgetLine[];
+}) {
+  return (
+    <section className="metric-card budget-metric-card">
+      <div className="budget-metric-heading">
+        <div className="metric-icon">
+          <Icon />
+        </div>
+        <div>
+          <span>{label}</span>
+          <small>{detail}</small>
+        </div>
+      </div>
+
+      {lines.length > 0 ? (
+        <div className="overview-budget-list">
+          {lines.map((line) => (
+            <div className="overview-budget-row" key={`${line.target}-${line.budgetType}`}>
+              <div className="overview-budget-copy">
+                <strong title={line.label}>{line.label}</strong>
+                <small>{formatOverviewBudgetSecondary(line)}</small>
+              </div>
+              <span className="overview-budget-value">{formatOverviewBudgetPair(line)}</span>
+              <div className="overview-budget-meter" aria-hidden="true">
+                <span style={{ width: `${Math.round(line.ratio * 100)}%`, background: line.color }} />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <small>No selected models.</small>
+      )}
     </section>
   );
 }
@@ -1804,11 +1939,31 @@ function trendFamilyLabel(target: TrendFamilyTarget): string {
   return familyTargets.find((family) => family.value === target)?.label ?? "Other / unknown";
 }
 
+function trendTargetLabel(target: TrendModelTarget, catalog: TrendModelFilterCatalog): string {
+  if (target === "all") {
+    return "All detected models";
+  }
+  if (isFamilyTarget(target)) {
+    return trendFamilyLabel(target);
+  }
+  return catalog.modelOptions.find((option) => option.value.toLowerCase() === target.toLowerCase())?.label ?? compactModelName(target);
+}
+
 function trendTargetColor(target: TrendModelTarget, index = 0): string {
   if (target === "family:other") {
     return "#B7A36F";
   }
   return resolveModelColor(target, index);
+}
+
+function overviewTargetColor(target: TrendModelTarget, catalog: TrendModelFilterCatalog, index: number): string {
+  if (target === "all") {
+    return "var(--ledger)";
+  }
+  if (isFamilyTarget(target)) {
+    return trendTargetColor(target, index);
+  }
+  return trendModelColor(target, catalog);
 }
 
 function trendModelColor(model: string, catalog: TrendModelFilterCatalog): string {
@@ -2002,6 +2157,64 @@ function buildOverviewUsageScope(usage: NormalizedUsage, selectedTargets: TrendM
   };
 }
 
+function buildOverviewBudgetLines(
+  usage: NormalizedUsage,
+  range: DateRange,
+  mode: PeriodMode,
+  selectedTargets: TrendModelTarget[],
+  catalog: TrendModelFilterCatalog,
+  budgets: TrendBudgetMap
+): OverviewBudgetLine[] {
+  const rows = overviewPeriodRows(usage, range, mode);
+  return overviewBudgetTargets(selectedTargets)
+    .map((target, index) => {
+      const summary = summarizeTargetUsage(rows, target);
+      const budget = trendBudgetForTarget(budgets, target);
+      const usedValue = trendMetricValue(summary, budget.budgetType);
+      const budgetValue = budget.budgetValue;
+      return {
+        target,
+        label: trendTargetLabel(target, catalog),
+        summary,
+        budgetType: budget.budgetType,
+        budgetValue,
+        usedValue,
+        ratio: budgetValue > 0 ? Math.max(0, Math.min(usedValue / budgetValue, 1)) : 0,
+        color: overviewTargetColor(target, catalog, index)
+      };
+    });
+}
+
+function overviewPeriodRows(usage: NormalizedUsage, range: DateRange, mode: PeriodMode): TrendUsageRow[] {
+  if (mode === "month") {
+    const dailyRows = filterUsageByRange(usage.daily, range);
+    if (dailyRows.length > 0) {
+      return dailyRows;
+    }
+
+    const month = usage.monthly.find((point) => point.month === range.start.slice(0, 7));
+    return month ? [month] : [];
+  }
+
+  return filterUsageByRange(usage.daily, range);
+}
+
+function overviewBudgetTargets(selectedTargets: TrendModelTarget[]): TrendModelTarget[] {
+  if (selectedTargets.includes("all")) {
+    return ["all"];
+  }
+
+  return selectedTargets.filter((target, index, targets) => target.trim().length > 0 && targets.indexOf(target) === index);
+}
+
+function summarizeTargetUsage(rows: TrendUsageRow[], target: TrendModelTarget): UsageSummary {
+  if (target === "all") {
+    return summarizeUsage(rows);
+  }
+
+  return summarizeSelectedUsage(rows, [target]);
+}
+
 function summarizeSelectedUsage(rows: TrendUsageRow[], selectedTargets: TrendModelTarget[]): UsageSummary {
   if (selectedTargets.includes("all")) {
     return summarizeUsage(rows);
@@ -2093,21 +2306,6 @@ function uniqueModels(models: string[]): string[] {
 function formatModelMixMeta(count: number, selectedTargets: TrendModelTarget[]): string {
   const noun = count === 1 ? "model" : "models";
   return selectedTargets.includes("all") ? `${count} ${noun}` : `${count} selected ${noun}`;
-}
-
-function summarizeMonthUsage(usage: NormalizedUsage, range: DateRange, selectedTargets: TrendModelTarget[]): UsageSummary {
-  const dailyRows = filterUsageByRange(usage.daily, range);
-  if (dailyRows.length > 0) {
-    return summarizeSelectedUsage(dailyRows, selectedTargets);
-  }
-
-  const month = usage.monthly.find((point) => point.month === range.start.slice(0, 7));
-  return month ? summarizeSelectedUsage([month], selectedTargets) : { totalTokens: 0, costUSD: 0 };
-}
-
-function metricDetail(summary: UsageSummary, range: DateRange, mode: PeriodMode): string {
-  const periodLabel = mode === "week" ? formatDateRangeWithoutYear(range) : formatPeriodMeta(mode, range);
-  return `${formatNumber(summary.totalTokens)} tokens - ${periodLabel}`;
 }
 
 function formatTrendMeta(mode: PeriodMode, range: DateRange): string {
@@ -2300,7 +2498,35 @@ function normalizeTrendPreferences(input: unknown): TrendPreferences {
     displayMode,
     selectedTargets: displayMode === "total" ? ["all"] : selectedTargets,
     periodMode: isPeriodMode(record.periodMode) ? record.periodMode : DEFAULT_TREND_PREFERENCES.periodMode,
-    customRange: normalizeStoredDateRange(record.customRange)
+    customRange: normalizeStoredDateRange(record.customRange),
+    budgets: normalizeTrendBudgets(record.budgets)
+  };
+}
+
+function trendBudgetForTarget(budgets: TrendBudgetMap, target: TrendModelTarget): TrendBudgetSetting {
+  return normalizeTrendBudgetSetting(budgets[target]);
+}
+
+function normalizeTrendBudgets(input: unknown): TrendBudgetMap {
+  if (!input || typeof input !== "object") {
+    return {};
+  }
+
+  return Object.entries(input as Record<string, unknown>).reduce<TrendBudgetMap>((budgets, [target, value]) => {
+    if (target.trim().length === 0) {
+      return budgets;
+    }
+    budgets[target] = normalizeTrendBudgetSetting(value);
+    return budgets;
+  }, {});
+}
+
+function normalizeTrendBudgetSetting(input: unknown): TrendBudgetSetting {
+  const record = input && typeof input === "object" ? (input as Partial<TrendBudgetSetting>) : {};
+  const budgetValue = Number(record.budgetValue);
+  return {
+    budgetType: isTrendMetric(record.budgetType) ? record.budgetType : "cost",
+    budgetValue: Number.isFinite(budgetValue) && budgetValue > 0 ? budgetValue : 0
   };
 }
 
@@ -2424,6 +2650,21 @@ function formatTrendValue(metric: TrendMetric, value: number): string {
 
 function shortTrendValue(metric: TrendMetric, value: number): string {
   return metric === "cost" ? shortMoney(value) : shortNumber(value);
+}
+
+function formatBudgetMetricValue(metric: TrendMetric, value: number): string {
+  return metric === "cost" ? formatMoney(value) : formatNumber(value);
+}
+
+function formatOverviewBudgetPair(line: OverviewBudgetLine): string {
+  const used = formatBudgetMetricValue(line.budgetType, line.usedValue);
+  const budget = line.budgetValue > 0 ? formatBudgetMetricValue(line.budgetType, line.budgetValue) : "No budget";
+  const suffix = line.budgetType === "tokens" && line.budgetValue > 0 ? " tokens" : "";
+  return `${used} / ${budget}${suffix}`;
+}
+
+function formatOverviewBudgetSecondary(line: OverviewBudgetLine): string {
+  return line.budgetType === "cost" ? `${formatNumber(line.summary.totalTokens)} tokens` : formatMoney(line.summary.costUSD);
 }
 
 function formatTrayUsed(bar: TrayIndicatorBar): string {

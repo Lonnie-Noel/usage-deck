@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Default desktop permissions for Usage Deck",
   "windows": ["main", "tray-panel"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "core:window:allow-start-dragging"]
 }

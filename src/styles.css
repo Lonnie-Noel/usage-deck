@@ -383,6 +383,73 @@ td:nth-child(3),
   overflow-wrap: anywhere;
 }
 
+.budget-metric-card {
+  align-content: start;
+}
+
+.budget-metric-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.budget-metric-heading > div:last-child {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.overview-budget-list {
+  display: grid;
+  gap: 8px;
+}
+
+.overview-budget-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+.overview-budget-copy {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.overview-budget-row strong {
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.overview-budget-value {
+  justify-self: end;
+  color: var(--soft);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.overview-budget-meter {
+  grid-column: 1 / -1;
+  height: 5px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: #101419;
+}
+
+.overview-budget-meter span {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  border-radius: inherit;
+}
+
 .panel {
   padding: 14px;
 }
@@ -559,7 +626,6 @@ td:nth-child(3),
   gap: 12px;
   background: #14191f;
   color: var(--ink);
-  cursor: pointer;
 }
 
 .model-filter-summary span,
@@ -630,13 +696,13 @@ td:nth-child(3),
 }
 
 .model-filter-grid {
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
 }
 
 .model-filter-models {
-  max-height: 168px;
+  max-height: 240px;
   overflow: auto;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
 }
 
 .model-filter-option {
@@ -645,11 +711,10 @@ td:nth-child(3),
   border-radius: 7px;
   padding: 8px;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(140px, 1fr) minmax(190px, 0.85fr);
   align-items: center;
   gap: 8px;
   background: #151a20;
-  cursor: pointer;
 }
 
 .model-filter-option.active {
@@ -657,7 +722,7 @@ td:nth-child(3),
   background: #1a2925;
 }
 
-.model-filter-option span {
+.model-filter-copy {
   min-width: 0;
   display: grid;
   gap: 2px;
@@ -667,9 +732,7 @@ td:nth-child(3),
   min-width: 0;
   font-size: 12px;
   line-height: 1.2;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .model-filter-option small {
@@ -677,14 +740,34 @@ td:nth-child(3),
   font-size: 11px;
 }
 
-.model-filter-option em {
-  border: 1px solid rgba(111, 183, 168, 0.45);
-  border-radius: 999px;
-  padding: 2px 6px;
-  color: var(--ledger);
+.model-budget-controls {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(78px, 0.75fr) minmax(100px, 1fr);
+  gap: 8px;
+}
+
+.model-budget-controls label {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.model-budget-controls label span {
+  color: var(--muted);
   font-size: 10px;
-  font-style: normal;
-  white-space: nowrap;
+}
+
+.model-budget-controls select,
+.model-budget-controls input {
+  width: 100%;
+  min-height: 30px;
+  padding-left: 8px;
+  font-size: 12px;
+}
+
+.model-budget-controls input {
+  padding-right: 8px;
 }
 
 .model-list {
@@ -1112,6 +1195,11 @@ td:first-child {
   gap: 10px;
 }
 
+.tray-panel-header {
+  cursor: move;
+  user-select: none;
+}
+
 .tray-panel-header > div {
   min-width: 0;
   display: grid;
@@ -1127,6 +1215,7 @@ td:first-child {
   display: flex;
   align-items: center;
   gap: 8px;
+  cursor: default;
 }
 
 .icon-command.compact {
@@ -1290,6 +1379,10 @@ td:first-child {
   background: #daf0e9;
 }
 
+:root[data-theme="light"] .overview-budget-meter {
+  background: #e6edf5;
+}
+
 :root[data-theme="light"] .tape-segment > span {
   background: rgba(34, 125, 112, 0.13);
 }
@@ -1409,6 +1502,14 @@ td:first-child {
   .tray-editor-grid .color-control {
     grid-column: span 2;
   }
+
+  .model-filter-option {
+    grid-template-columns: auto minmax(140px, 1fr);
+  }
+
+  .model-budget-controls {
+    grid-column: 2;
+  }
 }
 
 @media (max-width: 760px) {
@@ -1463,6 +1564,14 @@ td:first-child {
   .tray-editor-grid label:first-child,
   .tray-editor-grid .color-control {
     grid-column: span 1;
+  }
+
+  .model-filter-option {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .model-budget-controls {
+    grid-column: 1 / -1;
   }
 
   .segmented-control {

@@ -746,7 +746,6 @@ fn toggle_tray_panel(app: &AppHandle) -> tauri::Result<()> {
     .min_inner_size(320.0, 300.0)
     .resizable(false)
     .decorations(false)
-    .always_on_top(true)
     .skip_taskbar(true)
     .focused(true)
     .visible(false)

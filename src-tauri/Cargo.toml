@@ -1,6 +1,6 @@
 [package]
 name = "usage-deck"
-version = "0.0.2"
+version = "0.0.3"
 description = "Local ccusage dashboard"
 authors = ["Usage Deck"]
 edition = "2021"
