@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::fs;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -9,8 +9,8 @@ use std::sync::Mutex;
 use tauri::path::BaseDirectory;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{
-    image::Image, menu::MenuBuilder, AppHandle, Emitter, Manager, PhysicalPosition, WebviewUrl,
-    RunEvent, WebviewWindow, WebviewWindowBuilder, WindowEvent,
+    image::Image, menu::MenuBuilder, AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition,
+    WebviewUrl, RunEvent, WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
 use tauri_plugin_shell::ShellExt;
 
@@ -20,6 +20,12 @@ const TRAY_ID: &str = "usage-deck-tray";
 const TRAY_PANEL_LABEL: &str = "tray-panel";
 const TRAY_SETTINGS_FILE: &str = "tray-indicator-settings.json";
 const TRAY_SETTINGS_CHANGED_EVENT: &str = "tray-settings-changed";
+const TRAY_PANEL_WIDTH: f64 = 360.0;
+const TRAY_PANEL_MIN_HEIGHT: f64 = 140.0;
+const TRAY_PANEL_EMPTY_HEIGHT: f64 = 216.0;
+const TRAY_PANEL_ONE_BAR_HEIGHT: f64 = 184.0;
+const TRAY_PANEL_TWO_BAR_HEIGHT: f64 = 260.0;
+const TRAY_PANEL_HEIGHT_PADDING: f64 = 4.0;
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
@@ -206,7 +212,27 @@ fn save_tray_settings(app: AppHandle, settings: Value) -> Result<(), String> {
         }
     }
 
-    let path = tray_settings_path(&app)?;
+    write_tray_settings_value(&app, settings)
+}
+
+fn tray_settings_path(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .resolve(TRAY_SETTINGS_FILE, BaseDirectory::AppConfig)
+        .map_err(|error| format!("Failed to resolve tray settings path: {error}"))
+}
+
+fn read_tray_settings_value(app: &AppHandle) -> Result<Value, String> {
+    let path = tray_settings_path(app)?;
+    if !path.exists() {
+        return Ok(json!({}));
+    }
+
+    let raw = fs::read_to_string(&path).map_err(|error| format!("Failed to read tray settings: {error}"))?;
+    serde_json::from_str(&raw).map_err(|error| format!("Failed to parse tray settings: {error}"))
+}
+
+fn write_tray_settings_value(app: &AppHandle, settings: Value) -> Result<(), String> {
+    let path = tray_settings_path(app)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| format!("Failed to create tray settings directory: {error}"))?;
     }
@@ -218,12 +244,6 @@ fn save_tray_settings(app: AppHandle, settings: Value) -> Result<(), String> {
     app.emit(TRAY_SETTINGS_CHANGED_EVENT, settings)
         .map_err(|error| format!("Failed to notify tray settings change: {error}"))?;
     Ok(())
-}
-
-fn tray_settings_path(app: &AppHandle) -> Result<PathBuf, String> {
-    app.path()
-        .resolve(TRAY_SETTINGS_FILE, BaseDirectory::AppConfig)
-        .map_err(|error| format!("Failed to resolve tray settings path: {error}"))
 }
 
 fn remove_tray_icon(app: &AppHandle) -> Result<(), String> {
@@ -253,6 +273,11 @@ async fn show_dashboard(app: AppHandle) -> Result<(), String> {
     show_dashboard_window(&app)
 }
 
+#[tauri::command]
+async fn show_tray_panel(app: AppHandle) -> Result<(), String> {
+    show_tray_panel_window(&app).map_err(|error| error.to_string())
+}
+
 fn show_dashboard_window(app: &AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();
@@ -267,10 +292,69 @@ fn show_dashboard_window(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+fn show_tray_panel_window(app: &AppHandle) -> tauri::Result<()> {
+    let panel = match app.get_webview_window(TRAY_PANEL_LABEL) {
+        Some(panel) => panel,
+        None => create_tray_panel(app)?,
+    };
+    ensure_tray_panel_on_screen(&panel)?;
+    panel.show()?;
+    panel.set_focus()?;
+
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
+    }
+
+    Ok(())
+}
+
 #[tauri::command]
 async fn hide_tray_panel(app: AppHandle) -> Result<(), String> {
     if let Some(panel) = app.get_webview_window(TRAY_PANEL_LABEL) {
         panel.hide().map_err(|error| error.to_string())?;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+fn save_tray_panel_position(app: AppHandle, x: i32, y: i32) -> Result<(), String> {
+    let mut settings = read_tray_settings_value(&app)?;
+    if !settings.is_object() {
+        settings = json!({});
+    }
+    if let Some(object) = settings.as_object_mut() {
+        object.insert("panelPosition".to_string(), json!({ "x": x, "y": y }));
+    }
+    write_tray_settings_value(&app, settings)
+}
+
+#[tauri::command]
+fn resize_tray_panel(app: AppHandle, bar_count: usize, content_height: Option<f64>) -> Result<(), String> {
+    if let Some(panel) = app.get_webview_window(TRAY_PANEL_LABEL) {
+        let stored_position = stored_tray_panel_position(&app);
+        let current_position = panel.outer_position().ok();
+        let fallback_height = match bar_count.min(2) {
+            0 => TRAY_PANEL_EMPTY_HEIGHT,
+            1 => TRAY_PANEL_ONE_BAR_HEIGHT,
+            _ => TRAY_PANEL_TWO_BAR_HEIGHT,
+        };
+        let height = content_height
+            .filter(|height| height.is_finite() && *height > 0.0)
+            .map(|height| (height + TRAY_PANEL_HEIGHT_PADDING).ceil().max(TRAY_PANEL_MIN_HEIGHT))
+            .unwrap_or(fallback_height);
+        panel
+            .set_min_size(Some(LogicalSize::new(320.0, TRAY_PANEL_MIN_HEIGHT)))
+            .map_err(|error| format!("Failed to set tray panel minimum size: {error}"))?;
+        panel
+            .set_size(LogicalSize::new(TRAY_PANEL_WIDTH, height))
+            .map_err(|error| format!("Failed to resize tray panel: {error}"))?;
+        let desired_position = match (stored_position, current_position) {
+            (Some(_), Some(position)) => position,
+            (Some(position), None) => position,
+            (None, _) => centered_tray_panel_position(&panel).map_err(|error| format!("Failed to center tray panel: {error}"))?,
+        };
+        set_tray_panel_position(&panel, desired_position).map_err(|error| format!("Failed to position tray panel: {error}"))?;
     }
 
     Ok(())
@@ -621,6 +705,9 @@ pub fn run() {
             load_tray_settings,
             save_tray_settings,
             show_dashboard,
+            show_tray_panel,
+            save_tray_panel_position,
+            resize_tray_panel,
             hide_tray_panel
         ])
         .build(tauri::generate_context!())
@@ -628,6 +715,13 @@ pub fn run() {
         .run(|app, event| match event {
             RunEvent::ExitRequested { .. } | RunEvent::Exit => {
                 cleanup_tray_before_exit(app);
+            }
+            #[cfg(target_os = "macos")]
+            RunEvent::Reopen {
+                has_visible_windows: false,
+                ..
+            } => {
+                let _ = show_dashboard_window(app);
             }
             _ => {}
         });
@@ -729,47 +823,117 @@ fn toggle_tray_panel(app: &AppHandle) -> tauri::Result<()> {
     if let Some(panel) = app.get_webview_window(TRAY_PANEL_LABEL) {
         if panel.is_visible()? {
             panel.hide()?;
-        } else {
-            panel.show()?;
-            panel.set_focus()?;
+            return Ok(());
         }
-        return Ok(());
     }
 
+    show_tray_panel_window(app)
+}
+
+fn create_tray_panel(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     let panel = WebviewWindowBuilder::new(
         app,
         TRAY_PANEL_LABEL,
         WebviewUrl::App("index.html?panel=tray".into()),
     )
     .title("Usage Deck")
-    .inner_size(360.0, 360.0)
-    .min_inner_size(320.0, 300.0)
+    .inner_size(TRAY_PANEL_WIDTH, TRAY_PANEL_TWO_BAR_HEIGHT)
+    .min_inner_size(320.0, TRAY_PANEL_MIN_HEIGHT)
     .resizable(false)
     .decorations(false)
+    .transparent(true)
     .skip_taskbar(true)
     .focused(true)
     .visible(false)
     .build()?;
 
-    position_tray_panel(&panel)?;
-    panel.show()?;
-    panel.set_focus()?;
-
-    Ok(())
+    place_tray_panel_on_open(app, &panel)?;
+    Ok(panel)
 }
 
-fn position_tray_panel(panel: &WebviewWindow) -> tauri::Result<()> {
+fn place_tray_panel_on_open(app: &AppHandle, panel: &WebviewWindow) -> tauri::Result<()> {
+    let desired_position = match stored_tray_panel_position(app) {
+        Some(position) => position,
+        None => centered_tray_panel_position(panel)?,
+    };
+    set_tray_panel_position(panel, desired_position)
+}
+
+fn ensure_tray_panel_on_screen(panel: &WebviewWindow) -> tauri::Result<()> {
+    let desired_position = panel
+        .outer_position()
+        .unwrap_or_else(|_| centered_tray_panel_position(panel).unwrap_or(PhysicalPosition::new(0, 0)));
+    set_tray_panel_position(panel, desired_position)
+}
+
+fn centered_tray_panel_position(panel: &WebviewWindow) -> tauri::Result<PhysicalPosition<i32>> {
     let Some(monitor) = panel.current_monitor()?.or(panel.primary_monitor()?) else {
-        return Ok(());
+        return Ok(PhysicalPosition::new(0, 0));
     };
     let work_area = monitor.work_area();
     let panel_size = panel.outer_size()?;
-    let margin = (18.0 * monitor.scale_factor()).round() as i32;
-    let x = work_area.position.x + work_area.size.width as i32 - panel_size.width as i32 - margin;
-    let y = work_area.position.y + work_area.size.height as i32 - panel_size.height as i32 - margin;
+    let x = work_area.position.x + ((work_area.size.width as i32 - panel_size.width as i32) / 2);
+    let y = work_area.position.y + ((work_area.size.height as i32 - panel_size.height as i32) / 2);
+    Ok(PhysicalPosition::new(x, y))
+}
 
-    panel.set_position(PhysicalPosition::new(x.max(work_area.position.x), y.max(work_area.position.y)))?;
+fn set_tray_panel_position(panel: &WebviewWindow, desired_position: PhysicalPosition<i32>) -> tauri::Result<()> {
+    panel.set_position(clamp_tray_panel_position(panel, desired_position)?)?;
     Ok(())
+}
+
+fn clamp_tray_panel_position(
+    panel: &WebviewWindow,
+    desired_position: PhysicalPosition<i32>,
+) -> tauri::Result<PhysicalPosition<i32>> {
+    let panel_size = panel.outer_size()?;
+    let mut target_bounds = None;
+    for monitor in panel.available_monitors()? {
+        let work_area = monitor.work_area();
+        let min_x = work_area.position.x;
+        let min_y = work_area.position.y;
+        let right = work_area.position.x + work_area.size.width as i32;
+        let bottom = work_area.position.y + work_area.size.height as i32;
+        if desired_position.x >= min_x
+            && desired_position.x < right
+            && desired_position.y >= min_y
+            && desired_position.y < bottom
+        {
+            target_bounds = Some((min_x, min_y, right, bottom));
+            break;
+        }
+    }
+
+    let (min_x, min_y, right, bottom) = if let Some(bounds) = target_bounds {
+        bounds
+    } else if let Some(monitor) = panel.current_monitor()?.or(panel.primary_monitor()?) {
+        let work_area = monitor.work_area();
+        (
+            work_area.position.x,
+            work_area.position.y,
+            work_area.position.x + work_area.size.width as i32,
+            work_area.position.y + work_area.size.height as i32,
+        )
+    } else {
+        return Ok(desired_position);
+    };
+
+    let max_x = (right - panel_size.width as i32).max(min_x);
+    let max_y = (bottom - panel_size.height as i32).max(min_y);
+    Ok(PhysicalPosition::new(
+        desired_position.x.clamp(min_x, max_x),
+        desired_position.y.clamp(min_y, max_y),
+    ))
+}
+
+fn stored_tray_panel_position(app: &AppHandle) -> Option<PhysicalPosition<i32>> {
+    let settings = read_tray_settings_value(app).ok()?;
+    let position = settings.get("panelPosition")?;
+    let x = position.get("x")?.as_i64()?;
+    let y = position.get("y")?.as_i64()?;
+    let x = i32::try_from(x).ok()?;
+    let y = i32::try_from(y).ok()?;
+    Some(PhysicalPosition::new(x, y))
 }
 
 fn default_tray_summary() -> TrayIndicatorSummary {
@@ -782,9 +946,9 @@ fn default_tray_summary() -> TrayIndicatorSummary {
             color: "#8AB4FF".to_string(),
             used_value: 0.0,
             budget_value: 0.0,
-            budget_type: "tokens".to_string(),
+            budget_type: "cost".to_string(),
             ratio: 0.0,
-            budget_source: "relative".to_string(),
+            budget_source: "configured".to_string(),
         }],
     }
 }
@@ -810,7 +974,12 @@ fn render_tray_icon(summary: &TrayIndicatorSummary) -> Image<'static> {
 
 fn active_tray_bars(summary: &TrayIndicatorSummary) -> Vec<&TrayIndicatorBar> {
     if summary.enabled {
-        summary.bars.iter().take(2).collect()
+        summary
+            .bars
+            .iter()
+            .filter(|bar| bar.budget_value > 0.0)
+            .take(2)
+            .collect()
     } else {
         Vec::new()
     }

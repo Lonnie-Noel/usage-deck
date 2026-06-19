@@ -1,23 +1,48 @@
 import type { DailyPoint, ModelUsage, NormalizedUsage } from "./usageSchema";
+import {
+  filterUsageByRange,
+  getBudgetMonthRange,
+  getBudgetWeekRange,
+  type BudgetMonthWindow,
+  type BudgetWeekWindow
+} from "./dateRanges";
 
 export type TrayBudgetPeriod = "week" | "month";
 export type TrayBudgetType = "tokens" | "cost";
 export type TrayModelTarget = "family:gpt" | "family:claude" | "family:gemini" | "all" | string;
 
-export type TrayBarSetting = {
+export type TraySlotSetting = {
   id: string;
   enabled: boolean;
   target: TrayModelTarget;
   period: TrayBudgetPeriod;
-  budgetType: TrayBudgetType;
+};
+
+export type TrayModelBudgetSetting = {
+  target: TrayModelTarget;
+  enabled: boolean;
   weeklyBudget: number;
   monthlyBudget: number;
+  weeklyWindow: BudgetWeekWindow;
+  monthlyWindow: BudgetMonthWindow;
+  weeklyResetDay: number;
+  weeklyResetTime: string;
+  billingCycleDay: number;
   customColor: string;
 };
 
+export type TrayBarSetting = TraySlotSetting;
+
 export type TrayIndicatorSettings = {
   enabled: boolean;
-  bars: [TrayBarSetting, TrayBarSetting];
+  panelOpacity: number;
+  panelPosition?: TrayPanelPosition;
+  slots: [TraySlotSetting, TraySlotSetting];
+};
+
+export type TrayPanelPosition = {
+  x: number;
+  y: number;
 };
 
 export type TrayIndicatorBar = {
@@ -32,6 +57,7 @@ export type TrayIndicatorBar = {
   budgetType: TrayBudgetType;
   ratio: number;
   budgetSource: "configured" | "relative";
+  windowLabel: string;
 };
 
 export type TrayIndicatorSummary = {
@@ -43,14 +69,13 @@ export type TrayIndicatorSummary = {
 const STORAGE_KEY = "usage-deck.tray-indicator.v1";
 const DEFAULT_GPT = "#8AB4FF";
 const DEFAULT_CLAUDE = "#D98B4E";
-const DEFAULT_GEMINI = "#3DDC84";
-const OLD_DEFAULT_GEMINI = "#8AA7E8";
+const DEFAULT_GEMINI = "#A78BFA";
 const WINDOWS_TRAY_TOOLTIP_LIMIT = 63;
 
 const MODEL_COLORS = [
   "#8AB4FF",
   "#D98B4E",
-  "#3DDC84",
+  "#A78BFA",
   "#D66F5D",
   "#B7A36F",
   "#9D8AD8",
@@ -60,26 +85,19 @@ const MODEL_COLORS = [
 
 export const defaultTraySettings: TrayIndicatorSettings = {
   enabled: true,
-  bars: [
+  panelOpacity: 0.8,
+  slots: [
     {
       id: "primary",
       enabled: true,
       target: "family:gpt",
-      period: "week",
-      budgetType: "tokens",
-      weeklyBudget: 0,
-      monthlyBudget: 0,
-      customColor: DEFAULT_GPT
+      period: "week"
     },
     {
       id: "secondary",
       enabled: true,
       target: "family:claude",
-      period: "month",
-      budgetType: "tokens",
-      weeklyBudget: 0,
-      monthlyBudget: 0,
-      customColor: DEFAULT_CLAUDE
+      period: "week"
     }
   ]
 };
@@ -106,13 +124,16 @@ export function saveTraySettings(settings: TrayIndicatorSettings) {
 
 export function normalizeTraySettings(input: unknown): TrayIndicatorSettings {
   const record = input && typeof input === "object" ? (input as Partial<TrayIndicatorSettings>) : {};
-  const bars = Array.isArray(record.bars) ? record.bars : [];
+  const legacyRecord = record as Partial<TrayIndicatorSettings> & { bars?: unknown[] };
+  const slots = Array.isArray(record.slots) ? record.slots : Array.isArray(legacyRecord.bars) ? legacyRecord.bars : [];
 
   return {
     enabled: typeof record.enabled === "boolean" ? record.enabled : defaultTraySettings.enabled,
-    bars: [
-      normalizeBar(bars[0], defaultTraySettings.bars[0]),
-      normalizeBar(bars[1], defaultTraySettings.bars[1])
+    panelOpacity: normalizePanelOpacity(record.panelOpacity),
+    panelPosition: normalizePanelPosition(record.panelPosition),
+    slots: [
+      normalizeSlot(slots[0], defaultTraySettings.slots[0]),
+      normalizeSlot(slots[1], defaultTraySettings.slots[1])
     ]
   };
 }
@@ -140,7 +161,11 @@ export function buildModelOptions(usage: NormalizedUsage): Array<{ value: TrayMo
   ];
 }
 
-export function buildTrayIndicatorSummary(settings: TrayIndicatorSettings, usage: NormalizedUsage): TrayIndicatorSummary {
+export function buildTrayIndicatorSummary(
+  settings: TrayIndicatorSettings,
+  usage: NormalizedUsage,
+  modelBudgets: Record<string, TrayModelBudgetSetting> = {}
+): TrayIndicatorSummary {
   if (!settings.enabled) {
     return {
       enabled: false,
@@ -149,37 +174,31 @@ export function buildTrayIndicatorSummary(settings: TrayIndicatorSettings, usage
     };
   }
 
-  const activeSettings = settings.bars.filter((bar) => bar.enabled).slice(0, 2);
-  const periodRows = {
-    week: usage.daily,
-    month: usage.monthly.length > 0 ? usage.monthly : usage.daily
-  };
-  const periodTotals = {
-    week: totalPeriodUsage(periodRows.week, "week"),
-    month: totalPeriodUsage(periodRows.month, "month")
-  };
-
-  const bars = activeSettings.map((bar, index) => {
-    const stats = sumTargetUsage(periodRows[bar.period], bar.target, bar.period);
-    const configuredBudget = bar.period === "week" ? bar.weeklyBudget : bar.monthlyBudget;
-    const usedValue = budgetValueForType(stats, bar.budgetType);
-    const relativeBudget = budgetValueForType(periodTotals[bar.period], bar.budgetType);
-    const budgetValue = configuredBudget > 0 ? configuredBudget : relativeBudget;
-    const color = isHexColor(bar.customColor) ? bar.customColor : resolveModelColor(bar.target, index);
-    const budgetSource: TrayIndicatorBar["budgetSource"] = configuredBudget > 0 ? "configured" : "relative";
+  const activeSettings = settings.slots.filter((slot) => slot.enabled).slice(0, 2);
+  const bars = activeSettings.map((slot, index) => {
+    const budget = modelBudgets[slot.target] ?? fallbackModelBudget(slot.target, index);
+    const period = resolveSlotPeriod(slot, budget);
+    const range = budgetDateRange(budget, period);
+    const stats = sumTargetUsage(budgetRowsForPeriod(usage, budget, period, range), slot.target);
+    const configuredBudget = period === "week" ? budget.weeklyBudget : budget.monthlyBudget;
+    const usedValue = stats.costUSD;
+    const budgetValue = configuredBudget > 0 ? configuredBudget : 0;
+    const color = isHexColor(budget.customColor) ? budget.customColor : resolveModelColor(slot.target, index);
+    const budgetSource: TrayIndicatorBar["budgetSource"] = "configured";
 
     return {
-      id: bar.id,
-      label: targetLabel(bar.target),
-      period: bar.period,
+      id: slot.id,
+      label: targetLabel(slot.target),
+      period,
       color,
       usedTokens: stats.totalTokens,
       costUSD: stats.costUSD,
       usedValue,
       budgetValue,
-      budgetType: bar.budgetType,
+      budgetType: "cost" as const,
       ratio: budgetValue > 0 ? clamp(usedValue / budgetValue, 0, 1) : 0,
-      budgetSource
+      budgetSource,
+      windowLabel: budgetWindowShortLabel(budget, period, range)
     };
   });
 
@@ -229,31 +248,68 @@ export function compactModelName(model: string): string {
     .replace("-20250805", "");
 }
 
-function normalizeBar(input: unknown, fallback: TrayBarSetting): TrayBarSetting {
-  const record = input && typeof input === "object" ? (input as Partial<TrayBarSetting>) : {};
-  const legacyRecord = record as Partial<TrayBarSetting> & { colorMode?: "auto" | "custom" };
+function normalizeSlot(input: unknown, fallback: TraySlotSetting): TraySlotSetting {
+  const record = input && typeof input === "object" ? (input as Partial<TraySlotSetting>) : {};
   const target = typeof record.target === "string" ? record.target : fallback.target;
-  const storedColor = isHexColor(record.customColor) ? record.customColor : null;
-  const explicitlyCustomColor = legacyRecord.colorMode === "custom";
-  const preserveStoredColor = legacyRecord.colorMode === undefined ? isHexColor(record.customColor) : legacyRecord.colorMode === "custom";
-  const shouldMigrateGeminiDefault =
-    !explicitlyCustomColor &&
-    target.toLowerCase().includes("gemini") &&
-    storedColor?.toLowerCase() === OLD_DEFAULT_GEMINI.toLowerCase();
   return {
     id: typeof record.id === "string" ? record.id : fallback.id,
     enabled: typeof record.enabled === "boolean" ? record.enabled : fallback.enabled,
     target,
-    period: record.period === "month" ? "month" : record.period === "week" ? "week" : fallback.period,
-    budgetType: record.budgetType === "cost" ? "cost" : record.budgetType === "tokens" ? "tokens" : fallback.budgetType,
-    weeklyBudget: finiteNumber(record.weeklyBudget),
-    monthlyBudget: finiteNumber(record.monthlyBudget),
-    customColor: storedColor && preserveStoredColor && !shouldMigrateGeminiDefault ? storedColor : resolveModelColor(target)
+    period: record.period === "week" || record.period === "month" ? record.period : fallback.period
   };
 }
 
-function sumTargetUsage(rows: DailyPoint[], target: TrayModelTarget, period: TrayBudgetPeriod): ModelUsage {
-  return filterPeriod(rows, period).reduce<ModelUsage>(
+function normalizePanelOpacity(value: unknown): number {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return defaultTraySettings.panelOpacity;
+  }
+  return clamp(number, 0.1, 1);
+}
+
+function normalizePanelPosition(value: unknown): TrayPanelPosition | undefined {
+  const record = value && typeof value === "object" ? (value as Partial<TrayPanelPosition>) : {};
+  const x = Number(record.x);
+  const y = Number(record.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return undefined;
+  }
+  return { x: Math.round(x), y: Math.round(y) };
+}
+
+function fallbackModelBudget(target: TrayModelTarget, index = 0): TrayModelBudgetSetting {
+  return {
+    target,
+    enabled: true,
+    weeklyBudget: 0,
+    monthlyBudget: 0,
+    ...defaultBudgetWindowSettings(target),
+    customColor: resolveModelColor(target, index)
+  };
+}
+
+function resolveSlotPeriod(slot: TraySlotSetting, budget: TrayModelBudgetSetting): TrayBudgetPeriod {
+  const hasWeeklyBudget = budget.weeklyBudget > 0;
+  const hasMonthlyBudget = budget.monthlyBudget > 0;
+  if (hasWeeklyBudget && !hasMonthlyBudget) {
+    return "week";
+  }
+  if (hasMonthlyBudget && !hasWeeklyBudget) {
+    return "month";
+  }
+  if (hasWeeklyBudget && hasMonthlyBudget) {
+    return slot.period === "month" ? "month" : "week";
+  }
+  return slot.period;
+}
+
+export function defaultBudgetPeriodForTarget(target: TrayModelTarget): TrayBudgetPeriod {
+  const lower = target.toLowerCase();
+  return lower.includes("gpt") || lower.includes("openai") || lower.includes("codex") ? "week" : "month";
+}
+
+function sumTargetUsage(rows: DailyPoint[], target: TrayModelTarget): ModelUsage {
+  return rows.reduce<ModelUsage>(
     (total, row) => {
       for (const breakdown of breakdownsForRow(row)) {
         if (matchesTarget(breakdown.model, target)) {
@@ -267,39 +323,17 @@ function sumTargetUsage(rows: DailyPoint[], target: TrayModelTarget, period: Tra
   );
 }
 
-function totalPeriodUsage(rows: DailyPoint[], period: TrayBudgetPeriod): ModelUsage {
-  return filterPeriod(rows, period).reduce<ModelUsage>(
-    (total, row) => ({
-      model: "all",
-      totalTokens: total.totalTokens + row.totalTokens,
-      costUSD: total.costUSD + row.costUSD
-    }),
-    { model: "all", totalTokens: 0, costUSD: 0 }
-  );
-}
-
-function filterPeriod(rows: DailyPoint[], period: TrayBudgetPeriod): DailyPoint[] {
-  if (rows.length === 0) {
-    return [];
+function budgetRowsForPeriod(
+  usage: NormalizedUsage,
+  budget: TrayModelBudgetSetting,
+  period: TrayBudgetPeriod,
+  range: { start: string; end: string }
+): DailyPoint[] {
+  const dailyRows = filterUsageByRange(usage.daily, range);
+  if (dailyRows.length > 0 || period !== "month" || budget.monthlyWindow !== "calendar-month" || range.start.slice(0, 7) !== range.end.slice(0, 7)) {
+    return dailyRows;
   }
-
-  const sorted = rows.slice().sort((left, right) => left.date.localeCompare(right.date));
-  const latest = parseDateKey(sorted.at(-1)?.date ?? "");
-  if (!latest) {
-    return sorted;
-  }
-
-  if (period === "month") {
-    const monthKey = sorted.at(-1)?.date.slice(0, 7) ?? "";
-    return sorted.filter((row) => row.date.startsWith(monthKey));
-  }
-
-  const weekStart = new Date(latest);
-  weekStart.setDate(latest.getDate() - 6);
-  return sorted.filter((row) => {
-    const rowDate = parseDateKey(row.date);
-    return rowDate ? rowDate >= weekStart && rowDate <= latest : false;
-  });
+  return usage.monthly.filter((row) => row.month === range.start.slice(0, 7));
 }
 
 function breakdownsForRow(row: DailyPoint): ModelUsage[] {
@@ -358,10 +392,6 @@ function buildTooltip(bars: TrayIndicatorBar[]): string {
   return tooltip.length <= WINDOWS_TRAY_TOOLTIP_LIMIT ? tooltip : bars.map((bar) => trayTooltipSegment(bar, true)).join("\n");
 }
 
-function budgetValueForType(usage: Pick<ModelUsage, "totalTokens" | "costUSD">, type: TrayBudgetType): number {
-  return type === "cost" ? usage.costUSD : usage.totalTokens;
-}
-
 function periodTooltipLabel(period: TrayBudgetPeriod): string {
   return period === "week" ? "Weekly" : "Month";
 }
@@ -389,21 +419,70 @@ function trayTooltipSegment(bar: TrayIndicatorBar, extraCompact: boolean): strin
 }
 
 function budgetPairLabel(bar: TrayIndicatorBar): string {
-  const budget =
-    bar.budgetSource === "configured" && bar.budgetValue > 0
-      ? shortBudgetValueForPair(bar.budgetValue, bar.budgetType)
-      : relativeBudgetTooltipLabel(bar.budgetType);
   const used = shortBudgetValueForPair(bar.usedValue, bar.budgetType);
-  const suffix = bar.budgetType === "tokens" ? " tk" : "";
-  return `${used}/${budget}${suffix}`;
+  if (bar.budgetValue <= 0) {
+    return `${used} · ${shortNumber(bar.usedTokens)} tokens`;
+  }
+  const budget = shortBudgetValueForPair(bar.budgetValue, bar.budgetType);
+  return `${used}/${budget}`;
+}
+
+export function defaultBudgetWindowSettings(_target: TrayModelTarget): Pick<
+  TrayModelBudgetSetting,
+  "weeklyWindow" | "monthlyWindow" | "weeklyResetDay" | "weeklyResetTime" | "billingCycleDay"
+> {
+  return {
+    weeklyWindow: "calendar-week",
+    monthlyWindow: "calendar-month",
+    weeklyResetDay: 1,
+    weeklyResetTime: "00:00",
+    billingCycleDay: 1
+  };
+}
+
+export function budgetDateRange(setting: TrayModelBudgetSetting, period: TrayBudgetPeriod, reference = new Date()) {
+  if (period === "month") {
+    return getBudgetMonthRange(setting.monthlyWindow, setting.billingCycleDay, reference);
+  }
+  return getBudgetWeekRange(setting.weeklyWindow, setting.weeklyResetDay, setting.weeklyResetTime, reference);
+}
+
+function formatShortRange(range: { start: string; end: string }): string {
+  if (range.start === range.end) {
+    return shortDateLabel(range.start);
+  }
+  return `${shortDateLabel(range.start)} - ${shortDateLabel(range.end)}`;
+}
+
+function budgetWindowShortLabel(setting: TrayModelBudgetSetting, period: TrayBudgetPeriod, range: { start: string; end: string }): string {
+  const rangeLabel = formatShortRange(range);
+  if (period === "week") {
+    const windowLabel =
+      setting.weeklyWindow === "assigned-week"
+        ? `Reset ${weekdayLabel(setting.weeklyResetDay)} ${setting.weeklyResetTime}`
+        : "Calendar week";
+    return `${windowLabel} · ${rangeLabel}`;
+  }
+
+  const windowLabel = setting.monthlyWindow === "billing-cycle" ? `Billing day ${setting.billingCycleDay}` : "Calendar month";
+  return `${windowLabel} · ${rangeLabel}`;
+}
+
+function weekdayLabel(value: number): string {
+  const labels = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  return labels[value] ?? "Monday";
+}
+
+function shortDateLabel(value: string): string {
+  const date = parseDateKey(value);
+  if (!date) {
+    return value;
+  }
+  return date.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
 function shortBudgetValueForPair(value: number, type: TrayBudgetType): string {
   return type === "cost" ? shortMoney(value) : shortNumber(value);
-}
-
-function relativeBudgetTooltipLabel(type: TrayBudgetType): string {
-  return type === "cost" ? "rel$" : "rel";
 }
 
 function parseDateKey(value: string): Date | null {
@@ -424,27 +503,11 @@ function shortNumber(value: number): string {
   return String(Math.round(value));
 }
 
-function shortBudgetValue(value: number, type: TrayBudgetType): string {
-  if (type === "cost") {
-    return shortMoney(value);
-  }
-  return `${shortNumber(value)} tokens`;
-}
-
 function shortMoney(value: number): string {
   if (value >= 1_000) {
     return `$${(value / 1_000).toFixed(1)}K`;
   }
   return `$${value.toFixed(value >= 100 ? 0 : 2)}`;
-}
-
-function relativeBudgetLabel(type: TrayBudgetType): string {
-  return type === "cost" ? "relative cost scale" : "relative token scale";
-}
-
-function finiteNumber(value: unknown): number {
-  const number = Number(value);
-  return Number.isFinite(number) && number > 0 ? number : 0;
 }
 
 function isHexColor(value: unknown): value is string {
