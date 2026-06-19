@@ -1,6 +1,6 @@
 # Usage Deck
 
-Windows-first MVP desktop dashboard for local AI coding usage. The app reads ccusage JSON output and renders daily, monthly, session, and 5-hour block usage without sending local usage data anywhere.
+Desktop dashboard for local AI coding usage. The app reads ccusage JSON output and renders usage trends, model budgets, sessions, and active block data without sending local usage data anywhere.
 
 ## Stack
 
@@ -10,6 +10,32 @@ Windows-first MVP desktop dashboard for local AI coding usage. The app reads ccu
 - Zod runtime validation for ccusage JSON
 - Pinned internal `ccusage@20.0.11`
 - Tauri sidecar support for the pinned native ccusage binary
+
+## Installation
+
+Download the latest build from the [GitHub Releases page](https://github.com/Lonnie-Noel/usage-deck/releases).
+
+Version `0.0.3` includes:
+
+- Ubuntu x64 `.deb`: `Usage.Deck_0.0.3_amd64.deb`
+- Ubuntu x64 AppImage: `Usage.Deck_0.0.3_amd64.AppImage`
+- Windows x64 installer: `Usage.Deck_0.0.3_x64-setup.exe`
+- macOS x64 app zip: `Usage.Deck_v0.0.3_macos-x64.app.zip`
+
+Install the Ubuntu `.deb` package:
+
+```bash
+cd ~/Downloads
+sudo apt install ./Usage.Deck_0.0.3_amd64.deb
+```
+
+Then launch `Usage Deck` from the Ubuntu app launcher. If Ubuntu asks for dependencies, keep using `apt install ./Usage.Deck_0.0.3_amd64.deb` instead of running the `.deb` file directly; `apt` resolves package dependencies for the local installer.
+
+To remove the Ubuntu package:
+
+```bash
+sudo apt remove usage-deck
+```
 
 ## Data Source Strategy
 
@@ -57,7 +83,7 @@ Usage Deck includes a Tauri system tray indicator. The tray icon is rendered as 
 - Two enabled bars render as stacked gauges.
 - Each bar can target a model family such as GPT/OpenAI or Claude, all models, or an exact model returned by ccusage.
 - Each bar independently uses a weekly or monthly budget window, so the same model can appear twice with different budget periods.
-- Colors default to model-aware colors, such as green for GPT/OpenAI and orange for Claude, and can be overridden per bar.
+- Colors default to model-aware colors, such as blue for GPT/OpenAI, orange for Claude, and purple for Gemini, and can be overridden per model.
 
 Configure it in:
 
