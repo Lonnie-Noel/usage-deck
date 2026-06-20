@@ -2,7 +2,11 @@
 
 Desktop dashboard for local AI coding usage. The app reads ccusage JSON output and renders usage trends, model budgets, sessions, and active block data without sending local usage data anywhere.
 
-![Usage Deck overview dashboard](docs/usage-deck-overview.png)
+## Screenshots
+
+![Usage Deck overview dashboard with model budgets](docs/usage-deck-overview.png)
+
+![Usage Deck compact widget with budget gauges](docs/usage-deck-widget.png)
 
 ## Stack
 
